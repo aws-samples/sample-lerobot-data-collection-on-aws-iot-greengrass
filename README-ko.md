@@ -30,6 +30,11 @@ Jetson AGX Thor(JetPack 7 / CUDA 13, aarch64)에서 검증되었습니다.
 - 🗂 **파일 브라우저** — 업로드 상태 확인 · 미업로드분 재업로드 · 다운로드
 - 🧱 **자체 완결 이미지** — 컴포넌트 install이 디바이스에서 데이터수집 Docker 이미지를 처음부터 빌드(추론 베이스 무의존)
 
+## Demo Video
+  
+https://github.com/user-attachments/assets/e9d57dbb-1a8e-4d8f-bfc2-8e36aabdb341
+
+
 ## 아키텍처
 
 ```

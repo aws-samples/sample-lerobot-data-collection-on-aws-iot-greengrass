@@ -33,6 +33,11 @@ Validated on Jetson AGX Thor (JetPack 7 / CUDA 13, aarch64).
 - 🗂 **File browser** — Check upload status · re-upload missing files · download
 - 🧱 **Self-contained image** — The component install builds the data-collection Docker image from scratch on the device (no dependency on an inference base)
 
+## Demo Video
+  
+https://github.com/user-attachments/assets/e9d57dbb-1a8e-4d8f-bfc2-8e36aabdb341
+  
+
 ## Architecture
 
 ```

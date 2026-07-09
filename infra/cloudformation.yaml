@@ -1,0 +1,308 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "LeRobot Data Collection - IoT Custom Auth + CloudFront + S3"
+
+Parameters:
+  ThingName:
+    Type: String
+    Default: lerobot-device
+  DataBucketName:
+    Type: String
+    Default: ""
+    Description: "Leave empty to create new bucket"
+
+Conditions:
+  CreateDataBucket: !Equals [!Ref DataBucketName, ""]
+
+Resources:
+  # --- Lambda: Custom Authorizer ---
+  AuthLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  AuthLambda:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "IoT custom authorizer is stateless and must reach the public IoT service; a VPC adds no value for this sample."
+      checkov:
+        skip:
+          - id: CKV_AWS_117
+            comment: "Stateless authorizer; VPC not required for this sample."
+          - id: CKV_AWS_116
+            comment: "Synchronous IoT authorizer; a DLQ is not applicable."
+    Properties:
+      FunctionName: LeRobotIoTAuthorizer
+      ReservedConcurrentExecutions: 10
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt AuthLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json, base64
+          def handler(event, context):
+              token = event.get('token', event.get('protocolData', {}).get('mqtt', {}).get('password', ''))
+              if not token:
+                  token = event.get('protocolData', {}).get('http', {}).get('queryString', '').split('x-amz-customauthorizer-signature=')[-1].split('&')[0]  # checkov:skip=CKV_SECRET_6: AWS query-string parameter name, not a secret
+              try:
+                  decoded = base64.b64decode(token).decode()
+                  user, pwd = decoded.split(':', 1)
+              except:
+                  return deny(event)
+              if user == '<WEB_USERNAME>' and pwd == '<WEB_PASSWORD>':
+                  return allow(event)
+              return deny(event)
+          def allow(event):
+              return {
+                  'isAuthenticated': True,
+                  'principalId': 'web-lerobot-user',
+                  'disconnectAfterInSeconds': 3600,
+                  'refreshAfterInSeconds': 3600,
+                  'policyDocuments': [json.dumps({
+                      'Version': '2012-10-17',
+                      'Statement': [{
+                          'Effect': 'Allow',
+                          'Action': ['iot:Connect', 'iot:Publish', 'iot:Subscribe', 'iot:Receive'],
+                          # SECURITY(demo): scope to client/topic ARNs before production —
+                          # see DEPLOYMENT_GUIDE.md 0.2 (1).
+                          'Resource': '*'
+                      }]
+                  })]
+              }
+          def deny(event):
+              return {'isAuthenticated': False, 'principalId': 'deny', 'disconnectAfterInSeconds': 0, 'refreshAfterInSeconds': 0, 'policyDocuments': []}
+
+  AuthLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt AuthLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # --- IoT Authorizer ---
+  IoTAuthorizer:
+    Type: AWS::IoT::Authorizer
+    Properties:
+      AuthorizerName: LeRobotWebAuthorizer
+      AuthorizerFunctionArn: !GetAtt AuthLambda.Arn
+      Status: ACTIVE
+      SigningDisabled: true
+
+  # --- IoT Policy: Device ---
+  DeviceIoTPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Sub "LeRobotCollectPolicy-${ThingName}"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource:
+              - !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/web-lerobot-*"
+          - Effect: Allow
+            Action: iot:Publish
+            Resource:
+              - !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/lerobot/${ThingName}/collect/*"
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/lerobot/${ThingName}/collect/*"
+          - Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/lerobot/${ThingName}/collect/*"
+
+  # --- S3: Data Bucket (conditional) ---
+  # Hardened: block public access + default encryption + versioning + TLS-only
+  # bucket policy. Server access logging is left to the operator (see DEPLOYMENT_GUIDE.md 0.2 (3)).
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateDataBucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "Server access logging omitted for the sample; add a log bucket in production (see DEPLOYMENT_GUIDE.md 0.2)."
+      checkov:
+        skip:
+          - id: CKV_AWS_18
+            comment: "Access logging omitted for the sample; enable in production."
+    Properties:
+      BucketName: !Sub "lerobot-datasets-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  DataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateDataBucket
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt DataBucket.Arn
+              - !Sub "${DataBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # --- S3: Web UI ---
+  WebUIBucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "Server access logging omitted for this static web-UI sample bucket."
+      checkov:
+        skip:
+          - id: CKV_AWS_18
+            comment: "Access logging omitted for the sample."
+    Properties:
+      BucketName: !Sub "lerobot-collection-ui-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  WebUIBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebUIBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebUIBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  # --- CloudFront ---
+  OAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: lerobot-collection-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W10
+            reason: "CloudFront access logging omitted for the sample; add a log bucket in production."
+          - id: W70
+            reason: "Uses the default CloudFront certificate (*.cloudfront.net); MinimumProtocolVersion can only be set with a custom ACM certificate + custom domain."
+      checkov:
+        skip:
+          - id: CKV_AWS_86
+            comment: "Access logging omitted for the sample."
+          - id: CKV_AWS_68
+            comment: "AWS WAF omitted for the sample; add a WebACL in production."
+          - id: CKV_AWS_174
+            comment: "Default CloudFront certificate; TLS 1.2 minimum requires a custom domain/ACM certificate."
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3
+            DomainName: !GetAtt WebUIBucket.RegionalDomainName
+            OriginAccessControlId: !Ref OAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: S3
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+        PriceClass: PriceClass_100
+
+  # --- IAM: Credential Provider Role (S3 GetObject only) ---
+  CredentialProviderRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit RoleName is referenced by the IoT role alias and the docs; stable naming is intentional for this sample."
+    Properties:
+      RoleName: LeRobotCredentialProviderRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: credentials.iot.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3ReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !If
+                    - CreateDataBucket
+                    - !Sub "${DataBucket.Arn}/*"
+                    - !Sub "arn:aws:s3:::${DataBucketName}/*"
+
+  # --- IoT Role Alias ---
+  IoTRoleAlias:
+    Type: AWS::IoT::RoleAlias
+    Properties:
+      RoleAlias: LeRobotCredentialAlias
+      RoleArn: !GetAtt CredentialProviderRole.Arn
+
+Outputs:
+  CloudFrontURL:
+    Value: !Sub "https://${Distribution.DomainName}"
+  WebUIBucket:
+    Value: !Ref WebUIBucket
+  DataBucket:
+    Value: !If [CreateDataBucket, !Ref DataBucket, !Ref DataBucketName]
+  AuthorizerName:
+    Value: !Ref IoTAuthorizer
+  DeployCmd:
+    Value: !Sub "aws s3 cp web-ui/index.html s3://${WebUIBucket}/index.html --content-type text/html"

@@ -1,0 +1,25 @@
+# Downloaded datasets / large media
+test/
+datasets/
+*.mp4
+*.parquet
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Internal ops notes (do not publish)
+deploy-history.md
+progress.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env / secrets
+.env
+*.pem
+*.key
+credentials

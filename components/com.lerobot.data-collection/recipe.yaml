@@ -1,0 +1,238 @@
+RecipeFormatVersion: "2020-01-25"
+ComponentName: com.lerobot.data-collection
+ComponentVersion: "1.0.0"
+ComponentDescription: "LeRobot data collection (persistent container, multi-episode, file browser, self-building minimal image)"
+ComponentPublisher: Custom
+ComponentConfiguration:
+  DefaultConfiguration:
+    leaderPort: "/dev/ttyACM0"
+    followerPort: "/dev/ttyACM1"
+    robotType: "so101"
+    frontCameraIndex: "/dev/cam_front"
+    wristCameraIndex: "/dev/cam_wrist"
+    cameraWidth: "640"
+    cameraHeight: "480"
+    cameraFps: "30"
+    langInstruction: "pick orange"
+    datasetName: "pick_orange_demo"
+    numEpisodes: "50"
+    episodeLength: "300"
+    datasetDir: "/home/arobot/Desktop/physical-ai/so-101/outputs"
+    s3Bucket: ""
+    s3Prefix: "datasets/"
+    thingName: "lerobot-device"
+    region: "ap-northeast-2"
+    # KVS monitoring stream (workspace camera via com.groot.kvs-stream) used for
+    # live HLS monitoring + per-episode on-demand HLS playback in the web UI.
+    kvsStreamName: "thor-001-camera"
+    # Data-collection Docker image built STANDALONE in the install step
+    # (no inference-base dependency).
+    dataImage: "lerobot-data-collection:1.2.9"
+    # lerobot commit that includes so101_follower (PyPI 0.5.1 lacks it).
+    lerobotCommit: "c75455a6de5c818fa1bb69fb2d92423e86c70475"
+    # aarch64 torch stack — verified from Isaac-GR00T scripts/deployment/thor
+    # (commit 5dc80c4). The Jetson AI Lab index provides NVIDIA pre-built torch.
+    torchVersion: "2.10.0"
+    torchvisionVersion: "0.25.0"
+    torchcodecVersion: "0.10.0"
+    tritonVersion: "3.5.0"
+    jetsonTorchIndex: "https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple"
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        "com.lerobot.data-collection:pub:1":
+          policyDescription: "Publish status, video and file listing"
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+          resources:
+            - "lerobot/+/collect/status"
+            - "lerobot/+/collect/video"
+            - "lerobot/+/collect/files"
+            - "lerobot/+/collect/kvs"
+        "com.lerobot.data-collection:sub:1":
+          policyDescription: "Subscribe to commands"
+          operations:
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "lerobot/+/collect/command"
+Manifests:
+  - Platform:
+      os: linux
+      architecture: aarch64
+    Lifecycle:
+      install:
+        RequiresPrivilege: true
+        Script: |
+          set -e
+          mkdir -p /home/arobot/Desktop/physical-ai/so-101/outputs
+          pip3 install --break-system-packages -q awsiotsdk boto3 pyarrow 2>/dev/null || true
+
+          # ---------------------------------------------------------------
+          # Build a fully STANDALONE minimal data-collection image — no
+          # dependency on the inference base (groot-n16-inference). Installs
+          # only what lerobot-record needs: aarch64 torch (Jetson AI Lab
+          # index), torchcodec (FFmpeg source build), and lerobot. Idempotent.
+          #
+          # torch source verified from Isaac-GR00T scripts/deployment/thor
+          # (commit 5dc80c4): index https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple
+          # ---------------------------------------------------------------
+          DATA_IMAGE="{configuration:/dataImage}"
+          LEROBOT_COMMIT="{configuration:/lerobotCommit}"
+          TORCH_VERSION="{configuration:/torchVersion}"
+          TORCHVISION_VERSION="{configuration:/torchvisionVersion}"
+          TORCHCODEC_VERSION="{configuration:/torchcodecVersion}"
+          TRITON_VERSION="{configuration:/tritonVersion}"
+          JETSON_INDEX="{configuration:/jetsonTorchIndex}"
+
+          if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${DATA_IMAGE}$"; then
+            echo "[install] $DATA_IMAGE already exists — skipping build"
+            exit 0
+          fi
+
+          ARCH="$(uname -m)"
+          if [ "$ARCH" != "aarch64" ]; then
+            echo "[install] WARNING: standalone build targets aarch64 (Jetson Thor); detected $ARCH"
+          fi
+
+          BUILD_DIR="/tmp/lerobot-data-collection-build"
+          rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
+
+          # Self-contained Dockerfile (mirrors Dockerfile.data-collection-minimal).
+          cat > "$BUILD_DIR/Dockerfile" << 'DKEOF'
+          # Public NVIDIA CUDA image (Docker Hub) that bundles CUDA toolkit
+          # (incl. CUPTI + headers) AND cuDNN. The arm64/sbsa 13.0.2 variant is
+          # validated to run on Jetson Thor (L4T r38.x / JetPack 7). Using this
+          # avoids the missing-JetPack-lib failures (libcudnn.so.9, libcupti.so.13)
+          # that the plain CUDA *runtime* base hit, and provides headers needed by
+          # the torchcodec source build below.
+          FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
+          ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
+          ENV DEBIAN_FRONTEND=noninteractive
+          ENV UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv
+          ARG TORCH_VERSION
+          ARG TORCHVISION_VERSION
+          ARG TORCHCODEC_VERSION
+          ARG TRITON_VERSION
+          ARG JETSON_INDEX
+          ARG LEROBOT_COMMIT
+          # OS deps: python, git/curl, FFmpeg dev (torchcodec build), opencv runtime
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                  python3 python3-venv python3-dev \
+                  git git-lfs curl ca-certificates \
+                  build-essential pkg-config pybind11-dev \
+                  ffmpeg libavdevice-dev libavfilter-dev libavformat-dev \
+                  libavcodec-dev libavutil-dev libswresample-dev libswscale-dev \
+                  libgl1 libglib2.0-0 \
+              && rm -rf /var/lib/apt/lists/* && git lfs install
+          # NVPL LAPACK/BLAS — required by the Jetson aarch64 torch wheel.
+          # The base nvidia/cuda image ALREADY configures the CUDA apt repo and
+          # keyring (Signed-By=cuda-archive-keyring.gpg). Re-installing
+          # cuda-keyring here adds a second, conflicting source entry for the
+          # same repo URI and makes apt fail ("Conflicting values set for option
+          # Signed-By" -> INSTALL_ERROR). Install directly against the base repo.
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                  libnvpl-lapack0 libnvpl-blas0 && \
+              rm -rf /var/lib/apt/lists/*
+          RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+          ENV PATH="/root/.local/bin:/opt/gr00t-venv/bin:/usr/local/cuda/bin:$PATH"
+          RUN uv venv /opt/gr00t-venv --python 3.12
+          ENV VIRTUAL_ENV=/opt/gr00t-venv
+          ENV CUDA_HOME=/usr/local/cuda-13.0
+          # PyTorch (aarch64/CUDA13) from Jetson AI Lab index
+          RUN uv pip install --python /opt/gr00t-venv/bin/python --index-url "${JETSON_INDEX}" \
+                  "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}" "triton==${TRITON_VERSION}"
+          # cuDSS — the Jetson torch wheel links libcudss.so.0, which is NOT in the
+          # CUDA base image and is NOT pulled as a dep by the Jetson torch wheel.
+          # (cuDNN + CUPTI come from the cudnn-devel base.) Matches the proven
+          # GR00T Thor build, which installs nvidia-cudss-cu13 and exposes
+          # site-packages/nvidia/cudss/lib on LD_LIBRARY_PATH.
+          RUN uv pip install --python /opt/gr00t-venv/bin/python nvidia-cudss-cu13
+          # Loader path for both this build AND runtime (docker run lerobot-record):
+          # include the pip-wheel CUDA lib dirs (cuDSS, cuDNN) — mirrors the
+          # working groot1.7 com.groot.docker-build recipe.
+          ENV LD_LIBRARY_PATH="/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cu13/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudss/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/usr/local/cuda-13.0/lib64"
+          # CMake — torchcodec compiles a C++ extension via CMake. The working
+          # groot docker-build apt set includes cmake; the blog image was missing
+          # it ("RuntimeError: CMake is not available"). Separate step keeps the
+          # torch/cuDSS layers cached.
+          RUN apt-get update && apt-get install -y --no-install-recommends cmake && \
+              rm -rf /var/lib/apt/lists/*
+          # torchcodec — source build against system FFmpeg
+          RUN uv pip install --python /opt/gr00t-venv/bin/python setuptools && \
+              NV="$(find /opt/gr00t-venv/lib/python3.12/site-packages/nvidia -name lib -type d 2>/dev/null | tr '\n' ':')" && \
+              export LD_LIBRARY_PATH="/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:${NV}${LD_LIBRARY_PATH}" && \
+              export CPATH="${CUDA_HOME}/include:${CPATH:-}" && \
+              git clone --depth 1 --branch "v${TORCHCODEC_VERSION}" https://github.com/pytorch/torchcodec.git /tmp/tc && \
+              cd /tmp/tc && I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1 \
+                uv pip install --python /opt/gr00t-venv/bin/python . --no-build-isolation && \
+              cd / && rm -rf /tmp/tc
+          # lerobot (so101_follower commit) installed --no-deps to avoid its
+          # torchvision<0.23 / torchcodec pins clashing with the Jetson GPU stack.
+          # Its required runtime deps are installed EXPLICITLY and normally — none
+          # of these depend on torchvision/torchcodec, and torch is already
+          # satisfied, so there is no resolver conflict. List mirrors lerobot
+          # 0.4.1 [project.dependencies] (minus the torch family already present).
+          RUN uv pip install --python /opt/gr00t-venv/bin/python \
+                  draccus==0.10.0 deepdiff pyyaml einops numpy==1.26.4 boto3 rerun-sdk \
+                  datasets diffusers "huggingface-hub[hf-transfer,cli]" accelerate \
+                  pynput wandb gymnasium "imageio[ffmpeg]" termcolor safetensors av jsonlines && \
+              uv pip install --python /opt/gr00t-venv/bin/python --no-deps \
+                  feetech-servo-sdk pyserial opencv-python-headless awsiotsdk && \
+              uv pip install --python /opt/gr00t-venv/bin/python --no-deps \
+                  "lerobot @ git+https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+          RUN test -x /opt/gr00t-venv/bin/lerobot-record || (echo "lerobot-record missing" && exit 1)
+          # --- External control channel patch (FIFO) ---------------------------
+          # Append a redefinition of init_keyboard_listener (last def wins) that
+          # watches a control FIFO (LEROBOT_CONTROL_FIFO) and sets lerobot's own
+          # event flags (exit_early/stop_recording). Embedded as base64 to keep
+          # Python indentation intact inside this YAML block scalar.
+          RUN CU=$(find /opt/gr00t-venv -path '*/lerobot/utils/control_utils.py' | head -1) && \
+              test -n "$CU" && \
+              echo 'CgojID09PSBHcmVlbmdyYXNzIGV4dGVybmFsIGNvbnRyb2wgY2hhbm5lbCAoYXBwZW5kZWQgYnkgZGF0YS1jb2xsZWN0aW9uIGltYWdlKSA9PT0KZGVmIGluaXRfa2V5Ym9hcmRfbGlzdGVuZXIoKTogICMgbm9xYTogRjgxMSAgKGludGVudGlvbmFsIG92ZXJyaWRlLCBsYXN0IGRlZiB3aW5zKQogICAgaW1wb3J0IG9zLCB0aHJlYWRpbmcsIHRpbWUgYXMgX3RpbWUKICAgIGV2ZW50cyA9IHsiZXhpdF9lYXJseSI6IEZhbHNlLCAicmVyZWNvcmRfZXBpc29kZSI6IEZhbHNlLCAic3RvcF9yZWNvcmRpbmciOiBGYWxzZX0KCiAgICBmaWZvX3BhdGggPSBvcy5lbnZpcm9uLmdldCgiTEVST0JPVF9DT05UUk9MX0ZJRk8iKQogICAgaWYgZmlmb19wYXRoOgogICAgICAgIGRlZiBfd2F0Y2hfZmlmbygpOgogICAgICAgICAgICB3aGlsZSBUcnVlOgogICAgICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgICAgIHdpdGggb3BlbihmaWZvX3BhdGgsICJyIikgYXMgZjoKICAgICAgICAgICAgICAgICAgICAgICAgZm9yIGxpbmUgaW4gZjoKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNtZCA9IGxpbmUuc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiBjbWQgPT0gIm5leHQiOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByaW50KCJbQ1RSTF0gbmV4dCAtPiBleGl0X2Vhcmx5IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGVsaWYgY21kID09ICJyZXJlY29yZCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSByZXJlY29yZCIsIGZsdXNoPVRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJyZXJlY29yZF9lcGlzb2RlIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBlbGlmIGNtZCA9PSAic3RvcCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSBzdG9wIC0+IHN0b3BfcmVjb3JkaW5nIiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgICAgICAgICAgICAgIF90aW1lLnNsZWVwKDAuNSkKICAgICAgICB0aHJlYWRpbmcuVGhyZWFkKHRhcmdldD1fd2F0Y2hfZmlmbywgZGFlbW9uPVRydWUpLnN0YXJ0KCkKICAgICAgICBwcmludCgiW0NUUkxdIEZJRk8gY29udHJvbCB3YXRjaGluZyAlcyIgJSBmaWZvX3BhdGgsIGZsdXNoPVRydWUpCgogICAgdHJ5OgogICAgICAgIGZyb20gcHlucHV0IGltcG9ydCBrZXlib2FyZAoKICAgICAgICBkZWYgb25fcHJlc3Moa2V5KToKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgaWYga2V5ID09IGtleWJvYXJkLktleS5yaWdodDoKICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgIGVsaWYga2V5ID09IGtleWJvYXJkLktleS5sZWZ0OgogICAgICAgICAgICAgICAgICAgIGV2ZW50c1sicmVyZWNvcmRfZXBpc29kZSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgICAgIGV2ZW50c1siZXhpdF9lYXJseSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgZWxpZiBrZXkgPT0ga2V5Ym9hcmQuS2V5LmVzYzoKICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICBwYXNzCgogICAgICAgIGxpc3RlbmVyID0ga2V5Ym9hcmQuTGlzdGVuZXIob25fcHJlc3M9b25fcHJlc3MpCiAgICAgICAgbGlzdGVuZXIuc3RhcnQoKQogICAgICAgIHJldHVybiBsaXN0ZW5lciwgZXZlbnRzCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBOb25lLCBldmVudHMK' | base64 -d >> "$CU" && \
+              echo "[install] control_utils.py FIFO patch applied to $CU"
+          WORKDIR /workspace
+          ENTRYPOINT ["/bin/bash"]
+          DKEOF
+
+          echo "[install] building standalone $DATA_IMAGE (this can take a while) ..."
+          docker build -t "$DATA_IMAGE" \
+            --build-arg TORCH_VERSION="$TORCH_VERSION" \
+            --build-arg TORCHVISION_VERSION="$TORCHVISION_VERSION" \
+            --build-arg TORCHCODEC_VERSION="$TORCHCODEC_VERSION" \
+            --build-arg TRITON_VERSION="$TRITON_VERSION" \
+            --build-arg JETSON_INDEX="$JETSON_INDEX" \
+            --build-arg LEROBOT_COMMIT="$LEROBOT_COMMIT" \
+            "$BUILD_DIR"
+          rm -rf "$BUILD_DIR"
+          echo "[install] build complete: $DATA_IMAGE"
+        Timeout: 7200
+      run:
+        RequiresPrivilege: true
+        Script: |
+          export THING_NAME="{configuration:/thingName}"
+          export LEADER_PORT="{configuration:/leaderPort}"
+          export FOLLOWER_PORT="{configuration:/followerPort}"
+          export FRONT_CAMERA="{configuration:/frontCameraIndex}"
+          export WRIST_CAMERA="{configuration:/wristCameraIndex}"
+          export CAMERA_WIDTH="{configuration:/cameraWidth}"
+          export CAMERA_HEIGHT="{configuration:/cameraHeight}"
+          export CAMERA_FPS="{configuration:/cameraFps}"
+          export LANG_INSTRUCTION="{configuration:/langInstruction}"
+          export DATASET_NAME="{configuration:/datasetName}"
+          export NUM_EPISODES="{configuration:/numEpisodes}"
+          export EPISODE_LENGTH="{configuration:/episodeLength}"
+          export DATASET_DIR="{configuration:/datasetDir}"
+          export S3_BUCKET="{configuration:/s3Bucket}"
+          export S3_PREFIX="{configuration:/s3Prefix}"
+          export DATA_IMAGE="{configuration:/dataImage}"
+          export KVS_STREAM="{configuration:/kvsStreamName}"
+          export AWS_DEFAULT_REGION="{configuration:/region}"
+          mkdir -p /opt/groot
+          aws s3 cp "s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/1.0.0/collect.py" /opt/groot/collect.py --region ap-northeast-2
+          python3 -u /opt/groot/collect.py
+      shutdown:
+        RequiresPrivilege: true
+        Script: |
+          docker stop lerobot-record 2>/dev/null || true
+          docker rm lerobot-record 2>/dev/null || true
+          pkill -f "collect.py" 2>/dev/null || true
+        Timeout: 10

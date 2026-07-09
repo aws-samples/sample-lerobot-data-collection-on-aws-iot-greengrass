@@ -1,0 +1,212 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: com.groot.kvs-webrtc-ingest
+ComponentVersion: "1.0.0"
+ComponentType: "aws.greengrass.generic"
+ComponentDescription: "Color camera -> KVS WebRTC STORAGE ingestion (kvsWebrtcStorageAudioVideoMasterGstSample, JoinStorageSession) -> KVS stream thor-001-webrtc."
+ComponentPublisher: Custom
+# ---------------------------------------------------------------------------
+# WebRTC ingestion: the signaling channel `thor-001-webrtc` has
+# MediaStorageConfiguration ENABLED pointing at the KVS video stream
+# `thor-001-webrtc`. When the KVS WebRTC C SDK master detects a storage-enabled
+# channel it uses JoinStorageSession, so the H.264 media it sends is INGESTED
+# and persisted into the KVS stream (not just peer-to-peer). This component runs
+# that master with a COLOR (YUYV) camera pipeline. TES role already has
+# kinesisvideo:* so no extra IAM is needed.
+# ---------------------------------------------------------------------------
+ComponentConfiguration:
+  DefaultConfiguration:
+    channelName: "thor-001-webrtc"
+    region: "ap-northeast-2"
+    # Empty => auto-detect a COLOR (YUYV) capture device. Set explicitly (e.g.
+    # /dev/video8 for RealSense color) if auto-detect picks the wrong node.
+    videoDevice: ""
+    videoWidth: "640"
+    videoHeight: "480"
+    videoFps: "30"
+    credentialRefreshSec: "2700"
+    thingName: "thor-001"
+    # Scoped role the device AssumeRoles to mint short-lived VIEWER credentials
+    # for the web UI (joinStorageSessionAsViewer). Delivered over MQTT (retained).
+    viewerRoleArn: "arn:aws:iam::<AWS_ACCOUNT_ID>:role/KvsViewerRole"
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        "com.groot.kvs-webrtc-ingest:pub:1":
+          policyDescription: "Publish WebRTC ingestion status + web viewer credentials"
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+          resources:
+            - "groot/+/kvs-ingest/status"
+            - "lerobot/+/webrtc/viewer"
+Manifests:
+  - Platform:
+      os: linux
+      architecture: aarch64
+    Lifecycle:
+      install:
+        RequiresPrivilege: true
+        Script: |
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+            gstreamer1.0-tools v4l-utils
+
+          # Build the KVS WebRTC STORAGE ingestion sample
+          # (samples/webrtcstorage/kvsWebrtcStorageAudioVideoMasterGstSample.c):
+          # it calls JoinStorageSession so media is PERSISTED to the KVS stream
+          # without needing a viewer.
+          STORAGE_BIN=/opt/kvs-webrtc/build/samples/kvsWebrtcStorageAudioVideoMasterGstSample
+          apt-get install -y -qq \
+            cmake build-essential pkg-config \
+            libssl-dev libcurl4-openssl-dev liblog4cplus-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libsrtp2-dev libusb-1.0-0-dev git
+
+          mkdir -p /opt/kvs-webrtc/build && cd /opt/kvs-webrtc
+          if [ ! -d "amazon-kinesis-video-streams-webrtc-sdk-c" ]; then
+            git clone --depth 1 https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git
+          fi
+          # Start from a pristine GstMedia.c each deploy (undo any prior in-place
+          # edits), then apply idempotent patches.
+          GST_MEDIA=amazon-kinesis-video-streams-webrtc-sdk-c/samples/common/GstMedia.c
+          git -C amazon-kinesis-video-streams-webrtc-sdk-c checkout -- samples/common/GstMedia.c 2>/dev/null || true
+          # Diagnose: list formats of every /dev/video* node.
+          echo "[install] === /dev/video* formats ==="
+          for d in /dev/video*; do
+            echo "[install] $d:"
+            v4l2-ctl -d "$d" --list-formats 2>/dev/null | grep -iE "\[[0-9]|Pixel Format" | sed 's/^/[install]   /'
+          done
+          # Pick a COLOR node (YUYV/MJPG/UYVY/NV12/RGB); skip IR(GRAY/Y8)/Depth(Z16).
+          # A hardcoded /dev/video8 was giving GRAYSCALE => that node is IR/mono,
+          # not the RGB color camera. Auto-detect the real color node instead.
+          VCOLOR="{configuration:/videoDevice}"
+          if [ -z "$VCOLOR" ]; then
+            for d in /dev/video*; do
+              if v4l2-ctl -d "$d" --list-formats 2>/dev/null | grep -qiE "YUYV|MJPG|MJPEG|UYVY|NV12|RGB"; then VCOLOR="$d"; break; fi
+            done
+            VCOLOR="${VCOLOR:-/dev/video8}"
+          fi
+          echo "[install] selected COLOR device: $VCOLOR"
+          sed -i "s|autovideosrc ! queue ! videoconvert ! video/x-raw,width=1280,height=720,framerate=25/1 !|v4l2src device=$VCOLOR ! queue ! videoconvert ! video/x-raw,format=I420 !|g" "$GST_MEDIA"
+          echo "[install] GstMedia.c video source -> v4l2src $VCOLOR"
+          sed -i 's|videoconvert ! video/x-raw,format=I420 !|videoconvert ! clockoverlay halignment=right valignment=bottom shaded-background=true ! video/x-raw,format=I420 !|g' "$GST_MEDIA"
+          echo "[install] GstMedia.c clockoverlay (device time, bottom-right) added"
+          cd build
+          cmake ../amazon-kinesis-video-streams-webrtc-sdk-c \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SAMPLE=ON \
+            -DOPEN_SRC_INSTALL_PREFIX=/opt/kvs-webrtc/open-source
+          make -j$(nproc)
+          test -f "$STORAGE_BIN" || { echo "ERROR: storage sample not built"; exit 1; }
+          echo "KVS WebRTC storage sample (v4l2 /dev/video8, H.264) build complete"
+        Timeout: 3600
+      run:
+        RequiresPrivilege: true
+        Script: |
+          CHANNEL="{configuration:/channelName}"
+          REGION="{configuration:/region}"
+          WIDTH="{configuration:/videoWidth}"
+          HEIGHT="{configuration:/videoHeight}"
+          FPS="{configuration:/videoFps}"
+          VIDEO_DEV="{configuration:/videoDevice}"
+          REFRESH_SEC="{configuration:/credentialRefreshSec}"
+          THING="{configuration:/thingName}"
+
+          export AWS_DEFAULT_REGION="$REGION"
+          export LD_LIBRARY_PATH=/opt/kvs-webrtc/open-source/lib:${LD_LIBRARY_PATH:-}
+          TOPIC_STATUS="groot/$THING/kvs-ingest/status"
+
+          # Auto-detect a COLOR (YUYV) capture device if not specified. This
+          # deliberately targets YUYV (color) rather than GREY8 (IR).
+          if [ -z "$VIDEO_DEV" ]; then
+            for dev in /dev/video*; do
+              if v4l2-ctl -d "$dev" --list-formats 2>/dev/null | grep -q "YUYV"; then
+                VIDEO_DEV="$dev"; echo "[Auto] color(YUYV) device: $dev"; break
+              fi
+            done
+            VIDEO_DEV="${VIDEO_DEV:-/dev/video0}"
+          fi
+          echo "[Info] color device: $VIDEO_DEV"
+          v4l2-ctl -d "$VIDEO_DEV" --list-formats-ext 2>/dev/null | head -20 || true
+
+          get_credentials() {
+            if [ -n "${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}" ]; then
+              CREDS=$(python3 -c "
+          import urllib.request, json, os
+          uri = os.environ['AWS_CONTAINER_CREDENTIALS_FULL_URI']
+          token = os.environ.get('AWS_CONTAINER_AUTHORIZATION_TOKEN', '')
+          req = urllib.request.Request(uri, headers={'Authorization': token})
+          c = json.loads(urllib.request.urlopen(req).read())
+          print(f\"{c['AccessKeyId']} {c['SecretAccessKey']} {c['Token']}\")
+          ")
+              export AWS_ACCESS_KEY_ID=$(echo "$CREDS" | cut -d' ' -f1)
+              export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | cut -d' ' -f2)
+              export AWS_SESSION_TOKEN=$(echo "$CREDS" | cut -d' ' -f3-)
+            fi
+          }
+          publish_status() {
+            aws iot-data publish --topic "$TOPIC_STATUS" \
+              --payload "{\"state\":\"$1\",\"channel\":\"$CHANNEL\",\"stream\":\"thor-001-webrtc\",\"device\":\"$VIDEO_DEV\",\"ingestion\":true}" \
+              --region "$REGION" 2>/dev/null || true
+          }
+
+          get_credentials
+          # Channel + media-storage config are provisioned in the cloud already;
+          # this is idempotent/no-op if they exist.
+          aws kinesisvideo create-signaling-channel --channel-name "$CHANNEL" --region "$REGION" 2>/dev/null || true
+
+          echo "=== KVS WebRTC Ingestion v1.0.0 ==="
+          echo "Channel/Stream: $CHANNEL (storage ENABLED) | Device: $VIDEO_DEV | ${WIDTH}x${HEIGHT}@${FPS} | COLOR(YUYV)"
+
+          # Pass capture hints to the SDK sample via env.
+          export AWS_KVS_VIDEO_DEVICE="$VIDEO_DEV"
+          export AWS_KVS_VIDEO_WIDTH="$WIDTH"
+          export AWS_KVS_VIDEO_HEIGHT="$HEIGHT"
+          export AWS_KVS_VIDEO_FPS="$FPS"
+          export GST_PLUGIN_PATH=/opt/kvs-webrtc/build
+          # Verbose SDK logging so we can see signaling / storage-session / capture.
+          export AWS_KVS_LOG_LEVEL=2
+
+          # --- Web viewer credentials publisher (background) ------------------
+          # Browser has no AWS creds. The device mints short-lived, VIEWER-scoped
+          # STS creds (AssumeRole KvsViewerRole) and delivers them over MQTT
+          # (retained) to lerobot/$THING/webrtc/viewer — exactly the same delivery
+          # path as the HLS URLs. The Custom Authorizer gates who can subscribe.
+          # Browser uses these for joinStorageSessionAsViewer(thor-001-webrtc).
+          VIEWER_ROLE_ARN="{configuration:/viewerRoleArn}"
+          export CHANNEL REGION THING VIEWER_ROLE_ARN
+          echo 'aW1wb3J0IGpzb24sIG9zLCB0aW1lLCBzdWJwcm9jZXNzLCB1cmxsaWIucmVxdWVzdApSRUdJT049b3MuZW52aXJvblsiUkVHSU9OIl07IFJPTEU9b3MuZW52aXJvblsiVklFV0VSX1JPTEVfQVJOIl0KQ0hBTk5FTD1vcy5lbnZpcm9uWyJDSEFOTkVMIl07IFRISU5HPW9zLmVudmlyb25bIlRISU5HIl0KVE9QSUM9Imxlcm9ib3QvJXMvd2VicnRjL3ZpZXdlciIlVEhJTkcKZGVmIHRlc19lbnYoKToKICAgIGVudj1kaWN0KG9zLmVudmlyb24pCiAgICB1cmk9b3MuZW52aXJvbi5nZXQoIkFXU19DT05UQUlORVJfQ1JFREVOVElBTFNfRlVMTF9VUkkiKQogICAgaWYgdXJpOgogICAgICAgIHRvaz1vcy5lbnZpcm9uLmdldCgiQVdTX0NPTlRBSU5FUl9BVVRIT1JJWkFUSU9OX1RPS0VOIiwiIikKICAgICAgICByZXE9dXJsbGliLnJlcXVlc3QuUmVxdWVzdCh1cmksaGVhZGVycz17IkF1dGhvcml6YXRpb24iOnRva30pCiAgICAgICAgYz1qc29uLmxvYWRzKHVybGxpYi5yZXF1ZXN0LnVybG9wZW4ocmVxKS5yZWFkKCkpCiAgICAgICAgZW52WyJBV1NfQUNDRVNTX0tFWV9JRCJdPWNbIkFjY2Vzc0tleUlkIl07ZW52WyJBV1NfU0VDUkVUX0FDQ0VTU19LRVkiXT1jWyJTZWNyZXRBY2Nlc3NLZXkiXTtlbnZbIkFXU19TRVNTSU9OX1RPS0VOIl09Y1siVG9rZW4iXQogICAgcmV0dXJuIGVudgphcm49IiIKd2hpbGUgVHJ1ZToKICAgIHRyeToKICAgICAgICBlbnY9dGVzX2VudigpCiAgICAgICAgaWYgbm90IGFybjoKICAgICAgICAgICAgYXJuPXN1YnByb2Nlc3MucnVuKFsiYXdzIiwia2luZXNpc3ZpZGVvIiwiZGVzY3JpYmUtc2lnbmFsaW5nLWNoYW5uZWwiLCItLWNoYW5uZWwtbmFtZSIsQ0hBTk5FTCwiLS1yZWdpb24iLFJFR0lPTiwiLS1xdWVyeSIsIkNoYW5uZWxJbmZvLkNoYW5uZWxBUk4iLCItLW91dHB1dCIsInRleHQiXSxjYXB0dXJlX291dHB1dD1UcnVlLHRleHQ9VHJ1ZSxlbnY9ZW52KS5zdGRvdXQuc3RyaXAoKQogICAgICAgIHI9c3VicHJvY2Vzcy5ydW4oWyJhd3MiLCJzdHMiLCJhc3N1bWUtcm9sZSIsIi0tcm9sZS1hcm4iLFJPTEUsIi0tcm9sZS1zZXNzaW9uLW5hbWUiLCJ3ZWJ2aWV3ZXIiLCItLWR1cmF0aW9uLXNlY29uZHMiLCIzNjAwIiwiLS1xdWVyeSIsIkNyZWRlbnRpYWxzIiwiLS1vdXRwdXQiLCJqc29uIiwiLS1yZWdpb24iLFJFR0lPTl0sY2FwdHVyZV9vdXRwdXQ9VHJ1ZSx0ZXh0PVRydWUsZW52PWVudikKICAgICAgICBjcj1qc29uLmxvYWRzKHIuc3Rkb3V0KQogICAgICAgIHBheWxvYWQ9anNvbi5kdW1wcyh7InJlZ2lvbiI6UkVHSU9OLCJjaGFubmVsQXJuIjphcm4sInN0cmVhbSI6InRob3ItMDAxLXdlYnJ0YyIsImFjY2Vzc0tleUlkIjpjclsiQWNjZXNzS2V5SWQiXSwic2VjcmV0QWNjZXNzS2V5IjpjclsiU2VjcmV0QWNjZXNzS2V5Il0sInNlc3Npb25Ub2tlbiI6Y3JbIlNlc3Npb25Ub2tlbiJdLCJleHBpcmF0aW9uIjpjclsiRXhwaXJhdGlvbiJdfSkKICAgICAgICBzdWJwcm9jZXNzLnJ1bihbImF3cyIsImlvdC1kYXRhIiwicHVibGlzaCIsIi0tdG9waWMiLFRPUElDLCItLWNsaS1iaW5hcnktZm9ybWF0IiwicmF3LWluLWJhc2U2NC1vdXQiLCItLXBheWxvYWQiLHBheWxvYWQsIi0tcmV0YWluIiwiLS1yZWdpb24iLFJFR0lPTl0sZW52PWVudixjYXB0dXJlX291dHB1dD1UcnVlKQogICAgICAgIHByaW50KCJbY3JlZHNdIHB1Ymxpc2hlZCB2aWV3ZXIgY3JlZHMgZXhwICVzIiVjci5nZXQoIkV4cGlyYXRpb24iKSxmbHVzaD1UcnVlKQogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIHByaW50KCJbY3JlZHNdIGVycm9yOiAlciIlZSxmbHVzaD1UcnVlKQogICAgdGltZS5zbGVlcCg5MDApCg==' | base64 -d | python3 -u - &
+
+          # Loop: refresh credentials and (re)start the STORAGE master. The
+          # storage sample calls JoinStorageSession, so media is INGESTED into
+          # the KVS stream (no viewer needed).
+          while true; do
+            get_credentials
+            publish_status "starting"
+            echo "[$(date)] Starting WebRTC STORAGE master (ingestion) on $CHANNEL ..."
+            # stdbuf -oL -eL forces line-buffering so the SDK's own logs stream to
+            # the component log (otherwise block-buffered when piped, hiding them).
+            stdbuf -oL -eL /opt/kvs-webrtc/build/samples/kvsWebrtcStorageAudioVideoMasterGstSample \
+              "$CHANNEL" devicesrc 2>&1 &
+            SDK_PID=$!
+            publish_status "ingesting"
+
+            WAITED=0
+            while [ $WAITED -lt $REFRESH_SEC ]; do
+              if ! kill -0 $SDK_PID 2>/dev/null; then
+                echo "[$(date)] SDK exited, restart in 5s"; publish_status "restarting"; sleep 5; break
+              fi
+              sleep 10; WAITED=$((WAITED + 10))
+            done
+            if kill -0 $SDK_PID 2>/dev/null; then
+              echo "[$(date)] Credential refresh - restarting SDK"
+              kill $SDK_PID 2>/dev/null; wait $SDK_PID 2>/dev/null || true; sleep 2
+            fi
+          done
+      shutdown:
+        Script: |
+          pkill -f "kvsWebrtcClientMasterGstSample" 2>/dev/null || true
+        Timeout: 5

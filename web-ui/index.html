@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>LeRobot Data Collection</title>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js" integrity="sha384-u4uqeACkFcoKl57rBQJHVGDd1pqhW4w8X3WjTu1ZksPdxoLqdt34jpoNkJisE25W" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js" integrity="sha384-w6Gb3fXHb5e1LUYa/hYA5Q41bEDglN5ZPCG7Jvnoo8/X90oGnlPqBlBJCe38mEMm" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/aws-sdk/2.1692.0/aws-sdk.min.js" integrity="sha384-bsVTXMksIT73n577G/meHKgRRSzJu77AotDGo6x838B7oRUm9U+NvG/o2FLodTic" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/amazon-kinesis-video-streams-webrtc@2.8.1/dist/kvs-webrtc.min.js" integrity="sha384-hjUWCzXUdlOkwbIhlfk7ED2rpItw3qirvbCmWa1396rXquhy0aBYM4vCnbHVIXOh" crossorigin="anonymous"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;padding:1rem}
+.c{max-width:1080px;margin:0 auto}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;align-items:start}
+@media(max-width:820px){.cols{grid-template-columns:1fr}}
+.epwrap{display:grid;grid-template-columns:1fr 1.3fr;gap:.5rem;align-items:start}
+.epwrap .flist{max-height:260px;overflow:auto}
+@media(max-width:820px){.epwrap{grid-template-columns:1fr}}
+h1{font-size:1.3rem;margin-bottom:1rem;color:#fb923c}
+.card{background:#1e293b;border-radius:12px;padding:1.2rem;margin-bottom:.8rem;border:1px solid #334155}
+.card h2{font-size:.75rem;text-transform:uppercase;color:#94a3b8;margin-bottom:.5rem}
+label{display:block;font-size:.72rem;color:#94a3b8;margin-bottom:.15rem}
+input{width:100%;padding:.45rem .6rem;background:#0f172a;border:1px solid #475569;border-radius:6px;color:#e2e8f0;font-size:.82rem;margin-bottom:.4rem}
+input:focus{outline:none;border-color:#fb923c}
+.btn{padding:.55rem 1rem;border:none;border-radius:8px;font-size:.82rem;font-weight:600;cursor:pointer;width:100%;margin-bottom:.35rem}
+.btn:disabled{opacity:.3;cursor:not-allowed}
+.bl{background:#fb923c;color:#1e293b}.bs{background:#dc2626;color:#fff}
+.bo{background:#f59e0b;color:#1e293b}.bd{background:#6b7280;color:#fff}
+.bu{background:#2563eb;color:#fff}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:.4rem}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem}
+.navbar{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin-bottom:.8rem}
+.bnav{background:#334155;color:#e2e8f0}
+.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;font-size:.68rem;font-weight:600;text-transform:uppercase}
+.si{background:#374151;color:#9ca3af}.sr{background:#7f1d1d;color:#fca5a5;animation:p 1s infinite}
+.su{background:#1e3a5f;color:#93c5fd}.sd{background:#064e3b;color:#6ee7b7}
+.se{background:#7f1d1d;color:#f87171}.sx{background:#4a1d1d;color:#f87171}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.5}}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:.4rem}
+.inf{background:#0f172a;padding:.4rem .5rem;border-radius:6px}
+.inf .l{font-size:.62rem;color:#64748b}.inf .v{font-size:.95rem;font-weight:600}
+video{width:100%;border-radius:8px;margin-top:.4rem;background:#000}
+.log{background:#0f172a;border-radius:6px;padding:.4rem;max-height:100px;overflow-y:auto;font-family:monospace;font-size:.68rem;color:#94a3b8}
+.h{display:none}
+.flist{max-height:260px;overflow-y:auto;margin-top:.4rem}
+.frow{display:flex;align-items:center;gap:.4rem;padding:.35rem .4rem;border-radius:6px;background:#0f172a;margin-bottom:.25rem;font-size:.7rem}
+.frow:hover{background:#16233b}
+.frow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
+.frow .sz{color:#64748b;font-size:.62rem;flex-shrink:0}
+.frow input[type=checkbox]{width:auto;margin:0;flex-shrink:0}
+.tagU{background:#064e3b;color:#6ee7b7;padding:.1rem .4rem;border-radius:999px;font-size:.6rem;font-weight:600;flex-shrink:0}
+.tagN{background:#374151;color:#9ca3af;padding:.1rem .4rem;border-radius:999px;font-size:.6rem;font-weight:600;flex-shrink:0}
+.fbtn{background:#2563eb;color:#fff;border:none;border-radius:5px;padding:.2rem .45rem;font-size:.62rem;font-weight:600;cursor:pointer;flex-shrink:0;text-decoration:none}
+.fbtn.play{background:#7c3aed}
+.fsess{font-size:.62rem;color:#fb923c;margin:.4rem 0 .15rem;font-weight:600}
+</style>
+</head>
+<body>
+<div class="c">
+<h1>🤖 LeRobot Data Collection</h1>
+
+<div class="cols">
+<div class="col">
+<div class="card" id="P0">
+<h2>Login</h2>
+<label>IoT Endpoint</label>
+<input id="ep" value="<IOT_ENDPOINT>"/>
+<label>Authorizer Name</label>
+<input id="an" value="OrangeWebAuthorizer"/>
+<label>Username</label>
+<input id="un" value="<WEB_USERNAME>"/>
+<label>Password</label>
+<input id="pw" type="password" value="<WEB_PASSWORD>"/>
+<label>Thing Name</label>
+<input id="tn" value="thor-001"/>
+<button class="btn bl" onclick="doLogin()">Connect</button>
+</div>
+
+<div class="card h" id="P1">
+<h2>Control</h2>
+<label>Instruction</label>
+<input id="lang" value="pick orange"/>
+<label>Episodes</label>
+<input id="ne" type="number" min="1" value="50"/>
+<button class="btn bs" id="b1" onclick="cmd('start')">⏺ Start Recording</button>
+<div class="row3">
+<button class="btn bo" id="b2" onclick="cmd('stop')">⏹ Stop &amp; Save</button>
+<button class="btn bs" id="bEnd" onclick="cmd('endSession')">🟥 End Session</button>
+<button class="btn bd" id="b3" onclick="cmd('discard')">🗑 Discard</button>
+</div>
+<p style="font-size:.66rem;color:#64748b;margin-top:.3rem">Records the specified number of episodes back-to-back in <b>a single container</b>. Auto-uploads on End Session or Stop.</p>
+<h2 style="margin-top:.6rem">S3 Settings</h2>
+<label>Bucket</label>
+<input id="bk" value="<DATA_BUCKET>"/>
+<label>Prefix</label>
+<input id="px" value="datasets/"/>
+<button class="btn bu" id="b4" onclick="cmd('upload')">☁️ Upload to S3</button>
+</div>
+
+<div class="card h" id="P2">
+<h2>Status</h2>
+<span class="badge sx" id="bg">disconnected</span>
+<div class="g2" style="margin-top:.4rem">
+<div class="inf"><div class="l">Episode</div><div class="v" id="ve">0/50</div></div>
+<div class="inf"><div class="l">Step</div><div class="v" id="vs">0/300</div></div>
+</div>
+<div id="s3p" style="margin-top:.4rem;font-size:.7rem;color:#6ee7b7;word-break:break-all;display:none"></div>
+<div id="errmsg" style="margin-top:.4rem;font-size:.74rem;color:#f87171;word-break:break-all;display:none"></div>
+</div>
+
+<div class="card h" id="P4">
+<h2>Logs</h2>
+<div class="log" id="lg"></div>
+</div>
+
+</div>
+<div class="col">
+<div class="card h" id="P5">
+<h2>Files (by date · instruction)</h2>
+<div class="row">
+<div><label>Date</label><input id="fd"/></div>
+<div><label>Instruction</label><input id="fl" value="pick orange"/></div>
+</div>
+<div class="row">
+<button class="btn bl" id="b5" onclick="listFiles()">🔄 List</button>
+<button class="btn bu" id="b6" onclick="uploadSelected()" disabled>⬆️ Upload Selected</button>
+</div>
+<div class="flist" id="fldata"><p style="font-size:.7rem;color:#64748b">Click "List" to load files.</p></div>
+</div>
+
+<div class="card h" id="P3">
+<h2>Monitor</h2>
+<div style="display:flex;gap:.3rem;margin-bottom:.4rem">
+  <button class="btn bl" id="lmWebrtc" onclick="setLive('webrtc')" style="flex:1;font-size:.64rem;padding:.35rem .2rem">WebRTC Live</button>
+  <button class="btn bd" id="lmHls" onclick="setLive('hls')" style="flex:1;font-size:.64rem;padding:.35rem .2rem;opacity:.5">HLS Live</button>
+  <button class="btn bd" id="lmEp" onclick="setLive('episode')" style="flex:1;font-size:.64rem;padding:.35rem .2rem;opacity:.5">Episode Playback</button>
+</div>
+<div id="liveView">
+  <video id="kvsLive" autoplay muted playsinline controls></video>
+  <button class="btn bl" id="bLive" onclick="startLive()">🔄 Reconnect</button>
+</div>
+<div id="epView" style="display:none">
+  <div class="epwrap">
+    <div class="epleft">
+      <label>Episodes</label>
+      <div class="flist" id="kvsEps"><p style="font-size:.7rem;color:#64748b">Click ▶ next to a session folder in Files (or record &amp; End Session).</p></div>
+    </div>
+    <div class="epright">
+      <div class="row">
+      <div><label>Start</label><input id="epFrom" type="datetime-local"/></div>
+      <div><label>End</label><input id="epTo" type="datetime-local"/></div>
+      </div>
+      <button class="btn bu" id="bEps" onclick="playRangeHls()">▶️ Play Range (HLS)</button>
+      <label style="margin-top:.4rem">Playback</label><video id="kvsPlay" controls playsinline></video>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<script>
+let C=null,TN='';
+function L(m){const e=document.getElementById('lg');const d=document.createElement('div');d.textContent='['+new Date().toLocaleTimeString()+'] '+m;e.appendChild(d);e.scrollTop=e.scrollHeight}
+
+function doLogin(){
+  const ep=document.getElementById('ep').value.trim();
+  const an=document.getElementById('an').value.trim();
+  const u=document.getElementById('un').value.trim();
+  const p=document.getElementById('pw').value.trim();
+  TN=document.getElementById('tn').value.trim();
+  if(!ep||!u||!p){alert('Required fields missing');return}
+  const tok=btoa(u+':'+p);
+  const url=`wss://${ep}/mqtt?x-amz-customauthorizer-name=${encodeURIComponent(an)}`;
+  C=mqtt.connect(url,{
+    clientId:'weblerobot'+Date.now(),
+    protocolVersion:4,
+    username:u,
+    password:tok,
+    reconnectPeriod:3000,
+    connectTimeout:10000,
+    wsOptions:{}
+  });
+  C.on('connect',function(){
+    L('Connected');SB('idle');
+    document.getElementById('P0').classList.add('h');
+    ['P1','P2','P3','P4','P5'].forEach(x=>document.getElementById(x).classList.remove('h'));
+    C.subscribe('lerobot/'+TN+'/collect/status');
+    C.subscribe('lerobot/'+TN+'/collect/video');
+    C.subscribe('lerobot/'+TN+'/collect/files');
+    C.subscribe('lerobot/'+TN+'/collect/kvs');
+    // WebRTC viewer credentials (device-minted, retained) for live monitoring.
+    C.subscribe('lerobot/'+TN+'/webrtc/viewer');
+    // Named shadow 'episodes' — latest session's per-episode time windows.
+    C.subscribe('$aws/things/'+TN+'/shadow/name/episodes/get/accepted');
+    C.subscribe('$aws/things/'+TN+'/shadow/name/episodes/update/accepted');
+    setTimeout(function(){ try{C.publish('$aws/things/'+TN+'/shadow/name/episodes/get','');}catch(e){} },600);
+    // Prefill file-browser date (today, local) and instruction.
+    const d=new Date();const iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    document.getElementById('fd').value=iso;
+    document.getElementById('fl').value=document.getElementById('lang').value;
+    setEpDefaults();
+  });
+  C.on('error',function(e){L('Error: '+((e&&e.message)||e))});
+  C.on('close',function(){L('Connection closed');SB('disconnected')});
+  C.on('offline',function(){L('Offline — waiting to reconnect');SB('disconnected')});
+  C.on('reconnect',function(){L('Reconnecting...')});
+  C.on('message',function(t,m){
+    try{const d=JSON.parse(m.toString());
+      if(t.includes('/webrtc/viewer'))HVC(d);
+      else if(t.includes('/shadow/name/episodes/'))HSHADOW(d);
+      else if(t.includes('/status'))HS(d);
+      else if(t.includes('/video'))HV(d);
+      else if(t.includes('/files'))HF(d);
+      else if(t.includes('/kvs'))HK(d);
+    }catch(e){L('parse err: '+e)}
+  });
+}
+
+function cmd(a){
+  if(!C||!C.connected){alert('Not connected');return}
+  const d={action:a};
+  if(a==='start'){d.lang=document.getElementById('lang').value.trim();d.numEpisodes=document.getElementById('ne')?document.getElementById('ne').value:'1'}
+  if(a==='upload'){d.s3Bucket=document.getElementById('bk').value.trim();d.s3Prefix=document.getElementById('px').value.trim()}
+  C.publish('lerobot/'+TN+'/collect/command',JSON.stringify(d),{qos:1});L('→ '+a);
+}
+
+function HS(s){
+  SB(s.state);
+  document.getElementById('ve').textContent=s.episode+'/'+s.totalEpisodes;
+  // Log "start episode N" the moment the screen advances to a new episode number.
+  const ep=parseInt(s.episode,10);
+  if(s.state==='idle'){ HS._lastEp=null; }
+  if(!isNaN(ep) && ep!==HS._lastEp && s.state==='recording'){ L('start episode '+ep); HS._lastEp=ep; }
+  document.getElementById('vs').textContent=s.step+'/'+s.maxSteps;
+  const r=s.state==='recording';
+  document.getElementById('b1').disabled=r;
+  document.getElementById('b4').disabled=r;
+  // Stop & Save / End Session / Discard stay enabled regardless of state,
+  // so recording can always be stopped even if a status update is delayed.
+  const em=document.getElementById('errmsg');
+  if(s.error){em.textContent='⚠️ '+s.error;em.style.display='block';L('Error: '+s.error)}
+  else{em.style.display='none'}
+  if(s.s3Path){const el=document.getElementById('s3p');el.textContent='📦 '+s.s3Path;el.style.display='block'}
+}
+
+function HV(p){ /* front/wrist S3 playback replaced by KVS monitoring */ }
+
+// ---- KVS monitoring (live) + per-episode on-demand HLS playback ----
+let KVSEPS=[];
+function attachHls(video,url){
+  if(!video||!url)return;
+  if(window.Hls&&Hls.isSupported()){
+    if(video._hls){try{video._hls.destroy()}catch(e){}}
+    const h=new Hls({lowLatencyMode:true});
+    h.loadSource(url);h.attachMedia(video);video._hls=h;
+    h.on(Hls.Events.MANIFEST_PARSED,function(){video.play().catch(function(){})});
+  }else{ // Safari native HLS
+    video.src=url;video.play().catch(function(){});
+  }
+}
+function HK(p){
+  if(!p)return;
+  if(p.type==='live'){
+    // Live Monitor is now WebRTC (thor-001-webrtc). Do NOT attach the device's
+    // /kvs live HLS (that is the thor-001-camera IR/grey monitoring stream) to
+    // the #kvsLive element — it would override the WebRTC color video.
+    L('(ignored) legacy /kvs live HLS — live is WebRTC now');
+  }else if(p.type==='episodes'){
+    KVSEPS=p.episodes||[];
+    const box=document.getElementById('kvsEps');
+    if(!KVSEPS.length){box.innerHTML='<p style="font-size:.7rem;color:#64748b">No episodes</p>';return}
+    let html='';
+    KVSEPS.forEach(function(e,i){
+      const dur=(e.end&&e.start)?Math.round(e.end-e.start)+'s':'';
+      if(e.url){
+        html+='<div class="frow"><span class="nm">Episode '+e.episode+'</span>'+
+          '<span class="sz">'+dur+'</span>'+
+          '<button class="fbtn play" onclick="playKvsIdx('+i+')">▶️ Play</button></div>';
+      }else{
+        html+='<div class="frow"><span class="nm">Episode '+e.episode+'</span>'+
+          '<span class="sz" style="color:#f87171">'+(e.error||'no url')+'</span></div>';
+      }
+    });
+    box.innerHTML=html;
+    L('Episodes received: '+KVSEPS.length);
+  }
+}
+function playKvsIdx(i){
+  const e=KVSEPS[i];
+  if(e&&e.url){attachHls(document.getElementById('kvsPlay'),e.url);
+    document.getElementById('kvsPlay').scrollIntoView({behavior:'smooth'})}
+}
+
+// ===== WebRTC live viewer (joinStorageSessionAsViewer, thor-001-webrtc) =====
+// Viewer credentials are minted by the device and delivered over MQTT
+// (lerobot/{thing}/webrtc/viewer, retained) as short-lived STS (KvsViewerRole),
+// same delivery path as the HLS URLs.
+let CREDS=null, vPC=null, vSC=null;
+function awsCreds(){ return new AWS.Credentials(CREDS.accessKeyId,CREDS.secretAccessKey,CREDS.sessionToken); }
+function HVC(c){
+  if(!c||!c.channelArn){return}
+  CREDS=c;
+  L('WebRTC viewer credentials received (exp '+(c.expiration||'')+')');
+  startLive();
+}
+function stopWebrtcViewer(){
+  try{ if(vSC) vSC.close(); }catch(e){}
+  try{ if(vPC) vPC.close(); }catch(e){}
+  vSC=null; vPC=null;
+}
+let LIVEMODE='webrtc';
+function setLive(m){
+  LIVEMODE=m;
+  const map={webrtc:'lmWebrtc',hls:'lmHls',episode:'lmEp'};
+  Object.keys(map).forEach(function(k){ try{ document.getElementById(map[k]).style.opacity=(k===m?'1':'.5'); }catch(e){} });
+  const lv=document.getElementById('liveView'), ev=document.getElementById('epView');
+  if(m==='episode'){
+    stopLive();                       // stop live streaming while reviewing episodes
+    if(lv) lv.style.display='none';
+    if(ev) ev.style.display='';
+    return;
+  }
+  if(ev) ev.style.display='none';
+  if(lv) lv.style.display='';
+  try{ document.getElementById('kvsPlay').pause(); }catch(e){}
+  startLive();
+}
+function stopLive(){
+  stopWebrtcViewer();
+  const v=document.getElementById('kvsLive');
+  try{ if(v._hls){v._hls.destroy();v._hls=null;} }catch(e){}
+  try{ v.srcObject=null; }catch(e){}
+  try{ v.removeAttribute('src'); v.load(); }catch(e){}
+}
+function startLive(){
+  stopLive();
+  if(LIVEMODE==='hls'){ startHlsLive(); } else { startWebrtcViewer(); }
+}
+// HLS live fallback: WebRTC uses UDP (STUN/TURN) and may be blocked by a
+// corporate firewall. HLS runs over TCP/443 (CloudFront-like), so it works
+// where WebRTC does not. Same thor-001-webrtc (color, timestamped) stream.
+async function startHlsLive(){
+  if(!CREDS){ L('HLS live: waiting for credentials'); return; }
+  const region=CREDS.region, creds=awsCreds(), stream=CREDS.stream||'thor-001-webrtc';
+  try{
+    L('HLS live connecting ('+stream+')');
+    const kv=new AWS.KinesisVideo({region,credentials:creds});
+    const ep=await kv.getDataEndpoint({StreamName:stream,APIName:'GET_HLS_STREAMING_SESSION_URL'}).promise();
+    const am=new AWS.KinesisVideoArchivedMedia({region,credentials:creds,endpoint:ep.DataEndpoint});
+    const res=await am.getHLSStreamingSessionURL({StreamName:stream,PlaybackMode:'LIVE',Expires:3600}).promise();
+    attachHls(document.getElementById('kvsLive'),res.HLSStreamingSessionURL);
+    L('HLS live ready ('+stream+')');
+  }catch(e){ L('HLS live failed: '+(e.message||e)); }
+}
+async function startWebrtcViewer(){
+  if(!CREDS||!CREDS.channelArn){ L('WebRTC: waiting for credentials/channel'); return; }
+  if(!window.KVSWebRTC||!window.AWS){ L('WebRTC SDK not loaded'); return; }
+  stopWebrtcViewer();
+  const region=CREDS.region, channelARN=CREDS.channelArn, creds=awsCreds();
+  const clientId='web-'+Date.now();
+  try{
+    const kv=new AWS.KinesisVideo({region,credentials:creds});
+    const ep=await kv.getSignalingChannelEndpoint({ChannelARN:channelARN,
+      SingleMasterChannelEndpointConfiguration:{Protocols:['WSS','HTTPS'],Role:'VIEWER'}}).promise();
+    const eps={}; (ep.ResourceEndpointList||[]).forEach(e=>eps[e.Protocol]=e.ResourceEndpoint);
+    // WebRTC ingestion (storage) channel: a plain VIEWER offer is NOT answered.
+    // Must call joinStorageSessionAsViewer so KVS relays the ingested media.
+    // The WEBRTC endpoint needs a DEDICATED getSignalingChannelEndpoint call
+    // (requesting it together with WSS/HTTPS for VIEWER omits WEBRTC).
+    let webrtcEndpoint=null;
+    try{
+      const wep=await kv.getSignalingChannelEndpoint({ChannelARN:channelARN,
+        SingleMasterChannelEndpointConfiguration:{Protocols:['WEBRTC'],Role:'VIEWER'}}).promise();
+      webrtcEndpoint=((wep.ResourceEndpointList||[])[0]||{}).ResourceEndpoint;
+    }catch(e){ L('WEBRTC endpoint error: '+(e.message||e)); }
+    if(AWS.KinesisVideoWebRTCStorage && webrtcEndpoint){
+      try{
+        const st=new AWS.KinesisVideoWebRTCStorage({region,credentials:creds,endpoint:webrtcEndpoint});
+        await st.joinStorageSessionAsViewer({ChannelArn:channelARN,ClientId:clientId}).promise();
+        L('joinStorageSessionAsViewer OK');
+      }catch(e){ L('joinStorageSessionAsViewer error: '+(e.message||e)); }
+    }else{ L('storage-viewer unavailable sdk='+(!!AWS.KinesisVideoWebRTCStorage)+' ep='+(!!webrtcEndpoint)); }
+    const sc=new AWS.KinesisVideoSignalingChannels({region,credentials:creds,endpoint:eps.HTTPS});
+    const ice=await sc.getIceServerConfig({ChannelARN:channelARN}).promise();
+    const iceServers=[{urls:'stun:stun.kinesisvideo.'+region+'.amazonaws.com:443'}];
+    (ice.IceServerList||[]).forEach(s=>iceServers.push({urls:s.Uris,username:s.Username,credential:s.Password}));
+    vSC=new KVSWebRTC.SignalingClient({channelARN,channelEndpoint:eps.WSS,clientId,
+      role:KVSWebRTC.Role.VIEWER,region,credentials:creds,systemClockOffset:kv.config.systemClockOffset});
+    vPC=new RTCPeerConnection({iceServers,iceTransportPolicy:'all'});
+    vSC.on('open',async()=>{
+      const offer=await vPC.createOffer({offerToReceiveAudio:true,offerToReceiveVideo:true});
+      await vPC.setLocalDescription(offer);
+      vSC.sendSdpOffer(vPC.localDescription);
+      L('WebRTC offer sent');
+    });
+    vSC.on('sdpAnswer',async(a)=>{ await vPC.setRemoteDescription(a); L('WebRTC answer received'); });
+    vSC.on('iceCandidate',(c)=>{ vPC.addIceCandidate(c); });
+    vSC.on('close',()=>L('WebRTC signaling closed'));
+    vSC.on('error',(e)=>L('WebRTC signaling error: '+(e&&e.message||e)));
+    vPC.addEventListener('icecandidate',({candidate})=>{ if(candidate) vSC.sendIceCandidate(candidate); });
+    vPC.addEventListener('track',(e)=>{ document.getElementById('kvsLive').srcObject=e.streams[0]; L('WebRTC video track received'); });
+    vSC.open();
+    L('WebRTC viewer connecting');
+  }catch(e){ L('WebRTC viewer failed: '+(e.message||e)); }
+}
+// ===== Episode windows from device shadow 'episodes' (latest session) =====
+// Device (collect.py) reports per-episode [start,end] wall-clock windows; we
+// play each episode's range from the thor-001-webrtc ingested stream via HLS.
+let SESSION_EPS={};
+function HSHADOW(d){
+  const r=(d&&d.state&&d.state.reported)||(d&&d.reported)||d;
+  if(!r||!r.episodes){return}
+  SESSION_EPS=r; renderEpisodes();
+  L('Episode windows loaded: '+r.episodes.length+' (session '+(r.session_id||'')+')');
+}
+function renderEpisodes(){
+  const box=document.getElementById('kvsEps');
+  const eps=SESSION_EPS.episodes||[];
+  if(!eps.length){ box.innerHTML='<p style="font-size:.7rem;color:#64748b">No episode windows yet (recorded session appears here after End Session).</p>'; return; }
+  let html='<div style="font-size:.68rem;color:#94a3b8;margin-bottom:.25rem">Session '+(SESSION_EPS.session_id||'')+' — '+eps.length+' episodes ('+(SESSION_EPS.stream||'')+')</div>';
+  eps.forEach(function(e,i){
+    const dur=Math.max(0,Math.round((e.end-e.start)))+'s';
+    html+='<div class="frow"><span class="nm">Episode '+e.episode+'</span><span class="sz">'+dur+'</span>'+
+      '<button class="fbtn play" onclick="playEpisode('+i+')">▶️ Play</button></div>';
+  });
+  box.innerHTML=html;
+}
+async function playEpisode(i){
+  if(!CREDS){ L('waiting for credentials'); return; }
+  const e=(SESSION_EPS.episodes||[])[i]; if(!e){return}
+  setLive('episode');
+  setEpRange(e.start, e.end);
+  const region=CREDS.region, creds=awsCreds(), stream=SESSION_EPS.stream||CREDS.stream||'thor-001-webrtc';
+  try{
+    const kv=new AWS.KinesisVideo({region,credentials:creds});
+    const ep=await kv.getDataEndpoint({StreamName:stream,APIName:'GET_HLS_STREAMING_SESSION_URL'}).promise();
+    const am=new AWS.KinesisVideoArchivedMedia({region,credentials:creds,endpoint:ep.DataEndpoint});
+    const res=await am.getHLSStreamingSessionURL({StreamName:stream,PlaybackMode:'ON_DEMAND',
+      HLSFragmentSelector:{FragmentSelectorType:'PRODUCER_TIMESTAMP',
+        TimestampRange:{StartTimestamp:new Date(e.start*1000),EndTimestamp:new Date(e.end*1000)}},Expires:3600}).promise();
+    attachHls(document.getElementById('kvsPlay'),res.HLSStreamingSessionURL);
+    document.getElementById('kvsPlay').scrollIntoView({behavior:'smooth'});
+    L('Episode '+e.episode+' playback ('+stream+')');
+  }catch(err){ L('Episode HLS failed: '+(err.message||err)); }
+}
+// Default Start = now (when this screen opened), End = next day 00:00 (local).
+function setEpDefaults(){
+  const now=new Date();
+  const tmw=new Date(now); tmw.setDate(tmw.getDate()+1); tmw.setHours(0,0,0,0);
+  const p=function(n){return String(n).padStart(2,'0')};
+  const fmt=function(d){return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())};
+  const ef=document.getElementById('epFrom'), et=document.getElementById('epTo');
+  if(ef&&!ef.value) ef.value=fmt(now);
+  if(et&&!et.value) et.value=fmt(tmw);
+}
+// Set the Start/End inputs from epoch seconds (End null -> empty = live).
+function setEpRange(startSec,endSec){
+  const p=function(n){return String(n).padStart(2,'0')};
+  const fmt=function(d){return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())};
+  const ef=document.getElementById('epFrom'), et=document.getElementById('epTo');
+  if(ef) ef.value=fmt(new Date(startSec*1000));
+  if(et) et.value=endSec?fmt(new Date(endSec*1000)):'';
+}
+// Play a whole session: set Start/End to the session's full range and, for the
+// latest session (which has per-episode windows in the shadow), list episodes
+// on the left to pick from.
+function playSession(sess){
+  if(!CREDS){ L('waiting for credentials'); return; }
+  setLive('episode');
+  if(SESSION_EPS.session_id===sess && (SESSION_EPS.episodes||[]).length){
+    const eps=SESSION_EPS.episodes;
+    setEpRange(eps[0].start, eps[eps.length-1].end);
+    renderEpisodes();
+    document.getElementById('kvsEps').scrollIntoView({behavior:'smooth'});
+    L('Session '+sess+' — whole range set; pick an episode on the left');
+    playRangeHls();
+    return;
+  }
+  // Older session: derive start epoch from folder name (…_<epoch>). No per-episode windows.
+  const m=String(sess).match(/_(\d{9,})$/);
+  if(m){
+    setEpRange(parseInt(m[1],10), null);
+    document.getElementById('P3').scrollIntoView({behavior:'smooth'});
+    L('Session '+sess+' — per-episode windows exist only for the latest session; playing from session start');
+    playRangeHls();
+  }else{ L('Session '+sess+' — cannot determine time range'); }
+}
+// Episode/range playback from the thor-001-webrtc (ingested) stream.
+// If the range extends into the FUTURE (e.g. default now->tomorrow), use
+// LIVE_REPLAY (plays from StartTimestamp through the live edge); a bounded
+// PAST range uses ON_DEMAND.
+async function playRangeHls(){
+  if(!CREDS){ L('waiting for credentials'); return; }
+  const f=document.getElementById('epFrom').value, tt=document.getElementById('epTo').value;
+  if(!f){ alert('Select a start time'); return; }
+  const region=CREDS.region, creds=awsCreds(), stream=CREDS.stream||'thor-001-webrtc';
+  const startD=new Date(f), endD=tt?new Date(tt):null;
+  const future=!endD || endD.getTime()>Date.now();
+  try{
+    const kv=new AWS.KinesisVideo({region,credentials:creds});
+    const ep=await kv.getDataEndpoint({StreamName:stream,APIName:'GET_HLS_STREAMING_SESSION_URL'}).promise();
+    const am=new AWS.KinesisVideoArchivedMedia({region,credentials:creds,endpoint:ep.DataEndpoint});
+    let params;
+    if(future){
+      params={StreamName:stream,PlaybackMode:'LIVE_REPLAY',
+        HLSFragmentSelector:{FragmentSelectorType:'PRODUCER_TIMESTAMP',TimestampRange:{StartTimestamp:startD}},
+        Expires:3600};
+    }else{
+      params={StreamName:stream,PlaybackMode:'ON_DEMAND',
+        HLSFragmentSelector:{FragmentSelectorType:'PRODUCER_TIMESTAMP',
+          TimestampRange:{StartTimestamp:startD,EndTimestamp:endD}},Expires:3600};
+    }
+    const res=await am.getHLSStreamingSessionURL(params).promise();
+    attachHls(document.getElementById('kvsPlay'),res.HLSStreamingSessionURL);
+    document.getElementById('kvsPlay').scrollIntoView({behavior:'smooth'});
+    L('Range playback '+(future?'LIVE_REPLAY':'ON_DEMAND')+' ('+stream+')');
+  }catch(e){ L('HLS failed: '+(e.code||'')+' '+(e.message||e)); }
+}
+async function playRangeHls_OLD_UNUSED(){
+  return;
+}
+
+// ---- File browser (date/instruction folders) ----
+let FILES=[];
+
+function listFiles(){
+  if(!C||!C.connected){alert('Not connected');return}
+  const d={action:'list',
+    date:document.getElementById('fd').value.trim(),
+    lang:document.getElementById('fl').value.trim(),
+    s3Bucket:document.getElementById('bk').value.trim(),
+    s3Prefix:document.getElementById('px').value.trim()};
+  C.publish('lerobot/'+TN+'/collect/command',JSON.stringify(d),{qos:1});
+  L('→ list '+d.date+'/'+d.lang);
+  document.getElementById('fldata').innerHTML='<p style="font-size:.7rem;color:#64748b">Loading...</p>';
+}
+
+function uploadSelected(){
+  if(!C||!C.connected){alert('Not connected');return}
+  const keys=[...document.querySelectorAll('.fchk:checked')].map(c=>c.value);
+  if(!keys.length){alert('Select files first');return}
+  const d={action:'uploadFiles',
+    date:document.getElementById('fd').value.trim(),
+    lang:document.getElementById('fl').value.trim(),
+    s3Bucket:document.getElementById('bk').value.trim(),
+    s3Prefix:document.getElementById('px').value.trim(),
+    files:keys};
+  C.publish('lerobot/'+TN+'/collect/command',JSON.stringify(d),{qos:1});
+  L('→ uploadFiles ('+keys.length+')');
+}
+
+function fmtSize(n){
+  if(n>=1048576)return (n/1048576).toFixed(1)+'MB';
+  if(n>=1024)return (n/1024).toFixed(0)+'KB';
+  return n+'B';
+}
+
+function HF(p){
+  FILES=p.files||[];
+  const box=document.getElementById('fldata');
+  if(p.error){box.innerHTML='<p style="font-size:.7rem;color:#f87171">Error: '+p.error+'</p>';return}
+  if(!FILES.length){box.innerHTML='<p style="font-size:.7rem;color:#64748b">No files ('+(p.date||'')+' / '+(p.lang||'')+')</p>';
+    document.getElementById('b6').disabled=true;return}
+  // Group by session
+  const groups={};
+  FILES.forEach(f=>{(groups[f.session]=groups[f.session]||[]).push(f)});
+  let html='';
+  Object.keys(groups).sort().forEach(sess=>{
+    html+='<div class="fsess">📁 '+sess+' <button class="fbtn play" title="Play session episodes" onclick="playSession(\''+sess+'\')">▶️</button></div>';
+    groups[sess].forEach(f=>{
+      const tag=f.uploaded?'<span class="tagU">Uploaded</span>':'<span class="tagN">Not uploaded</span>';
+      const dl=f.uploaded&&f.url?'<a class="fbtn" href="'+f.url+'" download>⬇️</a>':'';
+      html+='<div class="frow">'+
+        '<input type="checkbox" class="fchk" value="'+f.key+'"'+(f.uploaded?'':' checked')+'>'+
+        '<span class="nm" title="'+f.rel+'">'+f.rel+'</span>'+
+        '<span class="sz">'+fmtSize(f.size)+'</span>'+tag+dl+
+        '</div>';
+    });
+  });
+  box.innerHTML=html;
+  document.getElementById('b6').disabled=false;
+  const up=FILES.filter(f=>f.uploaded).length;
+  L('Files: '+FILES.length+' ('+up+' uploaded)');
+}
+
+function playFile(i){
+  const f=FILES[i]; if(!f||!f.url)return;
+  // If this file's session is the latest recorded session (in the shadow),
+  // play from the thor-001-webrtc per-episode windows instead of the mp4.
+  if(SESSION_EPS.session_id && f.session===SESSION_EPS.session_id && (SESSION_EPS.episodes||[]).length){
+    renderEpisodes();
+    document.getElementById('kvsEps').scrollIntoView({behavior:'smooth'});
+    L('Session '+f.session+' — playing episodes from '+(SESSION_EPS.stream||'thor-001-webrtc'));
+    playEpisode(0);
+    return;
+  }
+  const v=document.getElementById('kvsPlay');
+  try{ if(v._hls){v._hls.destroy();v._hls=null;} }catch(e){}
+  try{ v.srcObject=null; }catch(e){}
+  v.src=f.url; v.play().catch(function(){});
+  v.scrollIntoView({behavior:'smooth'});
+  L('Playing file (mp4): '+f.rel);
+}
+
+function SB(st){
+  const b=document.getElementById('bg');
+  const cls={idle:'si',recording:'sr',saving:'su',uploading:'su',done:'sd',error:'se',disconnected:'sx'};
+  b.className='badge '+(cls[st]||'sx');
+  const lb={idle:'IDLE',recording:'⏺ REC',saving:'💾 SAVING',uploading:'UPLOADING',done:'DONE',error:'ERROR',disconnected:'DISCONNECTED'};
+  b.textContent=lb[st]||st;
+}
+</script>
+</body>
+</html>

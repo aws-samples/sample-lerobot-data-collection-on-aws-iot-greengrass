@@ -127,9 +127,9 @@ class Controller:
                     else:
                         print(f"[REC] Container exited rc={rc} — recording FAILED "
                               f"(no clean completion). Skipping upload.")
-                        self._error = (f"녹화 실패 (exit {rc}): " + detail) if detail else (
-                            f"녹화 실패 (exit {rc}). 로봇 팔/카메라 연결 확인 "
-                            f"(예: 모터 ID 누락).")
+                        self._error = (f"Recording failed (exit {rc}): " + detail) if detail else (
+                            f"Recording failed (exit {rc}). Check the robot arm/camera connections "
+                            f"(e.g. missing motor ID).")
                         print(f"[REC] error detail: {self._error}")
                         self.state = "error"
                         self._publish_status()

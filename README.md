@@ -40,6 +40,11 @@ https://github.com/user-attachments/assets/e9d57dbb-1a8e-4d8f-bfc2-8e36aabdb341
 
 ## Architecture
 
+![Architecture — LeRobot data collection on AWS IoT Greengrass](docs/architecture.png)
+
+<details>
+<summary>Text diagram</summary>
+
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │  🌐  Web console (CloudFront + MQTT over WSS, Custom Authorizer)    │
@@ -74,6 +79,8 @@ https://github.com/user-attachments/assets/e9d57dbb-1a8e-4d8f-bfc2-8e36aabdb341
 │      data/*.parquet · videos/observation.images.*/*.mp4 · meta/*   │
 └────────────────────────────────────────────────────────────────────┘
 ```
+
+</details>
 
 - **Control / data plane separation**: commands, status, and the episode window (Shadow) flow through IoT Core; datasets go to S3; live and replay video go through KVS.
 - **Two video paths**: dataset mp4 (exact training data) and the KVS stream (monitoring / replay) are separate pipelines.

@@ -1,34 +1,34 @@
 # =============================================================================
-# Dockerfile.data-collection-minimal  —  완전 독립(standalone) 빌드
+# Dockerfile.data-collection-minimal  —  fully standalone build
 # -----------------------------------------------------------------------------
-# 목적: 데이터 "수집(teleoperation 녹화)"에만 필요한 최소 이미지를, 추론용
-#       베이스(groot-n16-inference)에 의존하지 않고 처음부터 빌드한다.
+# Purpose: build a minimal image needed only for data "collection (teleoperation recording)",
+#          from scratch, without depending on the inference base (groot-n16-inference).
 #
-# 추론 이미지가 필요 없는 이유:
-#   - 데이터 수집은 신경망 추론을 하지 않는다. leader→follower 동작을 카메라/관절과
-#     함께 `lerobot-record`로 기록할 뿐. GR00T 모델 가중치/ONNX/추론 서버 전부 불필요.
+# Why the inference image is not needed:
+#   - Data collection does no neural-network inference. It only records leader->follower motion
+#     together with cameras/joints via `lerobot-record`. No GR00T model weights/ONNX/inference server needed.
 #
-# aarch64(Jetson Thor)에서 torch를 어떻게 구하나 — 검증된 출처:
-#   Isaac-GR00T의 scripts/deployment/thor/{install_deps.sh, pyproject.toml}
-#   (commit 5dc80c4)에서 확인한 사실을 그대로 반영했다.
-#     · torch 휠 인덱스: https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple
-#     · 핀: torch==2.10.0 torchvision==0.25.0 torchcodec==0.10.0 triton==3.5.0
-#     · torch 휠은 NVPL LAPACK/BLAS(libnvpl-*)를 시스템에서 요구한다.
-#     · torchcodec(비디오 디코딩/인코딩)는 시스템 FFmpeg 대상으로 소스 빌드.
-#   → 즉 "GR00T 전체 레포 클론" 없이 위 패키지만 직접 깔면 lerobot-record가 돈다.
+# How torch is obtained on aarch64 (Jetson Thor) — verified source:
+#   Isaac-GR00T scripts/deployment/thor/{install_deps.sh, pyproject.toml}
+#   (commit 5dc80c4); the facts confirmed there are reflected as-is.
+#     - torch wheel index: https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple
+#     - pins: torch==2.10.0 torchvision==0.25.0 torchcodec==0.10.0 triton==3.5.0
+#     - the torch wheel requires NVPL LAPACK/BLAS (libnvpl-*) from the system.
+#     - torchcodec (video decode/encode) is source-built against the system FFmpeg.
+#   -> i.e. installing just the above packages (without cloning the whole GR00T repo) is enough to run lerobot-record.
 #
-# lerobot 핀(중요): PyPI lerobot==0.5.1에는 so101_follower가 없다. Isaac-GR00T가
-#   고정한 git commit(c75455a)로 설치한다. torch 덮어쓰기를 막기 위해 --no-deps.
+# lerobot pin (important): PyPI lerobot==0.5.1 lacks so101_follower. Install the git commit
+#   pinned by Isaac-GR00T (c75455a). Use --no-deps to avoid overwriting torch.
 #
-# 빌드(디바이스 = Jetson Thor aarch64에서):
+# Build (on the device = Jetson Thor aarch64):
 #   docker build -f Dockerfile.data-collection-minimal \
 #     -t lerobot-data-collection:latest .
 # =============================================================================
 
-# Public NVIDIA CUDA 이미지(Docker Hub): CUDA 툴킷(CUPTI·헤더 포함) + cuDNN 번들.
-# arm64/sbsa 13.0.2 변형은 Jetson Thor(L4T r38.x / JetPack 7)에서 동작 검증됨.
-# 범용 CUDA runtime 베이스가 겪던 누락 라이브러리(libcudnn.so.9, libcupti.so.13)와
-# torchcodec 소스 빌드용 헤더 부재를 한 번에 해결한다.
+# Public NVIDIA CUDA image (Docker Hub): CUDA toolkit (incl. CUPTI/headers) + cuDNN bundle.
+# The arm64/sbsa 13.0.2 variant is verified to run on Jetson Thor (L4T r38.x / JetPack 7).
+# It resolves in one shot the missing libraries (libcudnn.so.9, libcupti.so.13) that the plain
+# CUDA runtime base hit, plus the missing headers for the torchcodec source build.
 FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
 
 ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
@@ -36,7 +36,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV DOCKER_CONTAINER=1
 ENV UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv
 
-# torch 핀(여기 한 곳에서 관리). install_deps.sh / thor pyproject.toml과 일치.
+# torch pins (managed here in one place). Matches install_deps.sh / thor pyproject.toml.
 ARG TORCH_VERSION=2.10.0
 ARG TORCHVISION_VERSION=0.25.0
 ARG TORCHCODEC_VERSION=0.10.0
@@ -45,12 +45,12 @@ ARG JETSON_INDEX=https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple
 ARG LEROBOT_COMMIT=c75455a6de5c818fa1bb69fb2d92423e86c70475
 
 # -----------------------------------------------------------------------------
-# 1) OS 패키지
+# 1) OS packages
 #    - python3.12 / venv
-#    - git (lerobot git 설치), curl (uv 설치)
-#    - FFmpeg dev 라이브러리: torchcodec 소스 빌드에 필요 (install_deps.sh와 동일)
-#    - NVIDIA CUDA apt 저장소 등록 후 NVPL LAPACK/BLAS: aarch64 torch 휠이 요구
-#    - 카메라(opencv) 런타임: libGL/glib
+#    - git (lerobot git install), curl (uv install)
+#    - FFmpeg dev libraries: required for the torchcodec source build (same as install_deps.sh)
+#    - after the NVIDIA CUDA apt repo is registered, NVPL LAPACK/BLAS: required by the aarch64 torch wheel
+#    - camera (opencv) runtime: libGL/glib
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-venv python3-dev \
@@ -63,16 +63,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
-# NVPL LAPACK/BLAS — Jetson torch 휠이 링크하는 런타임 라이브러리.
-# 베이스 nvidia/cuda 이미지가 CUDA apt 저장소+키링(Signed-By=cuda-archive-keyring.gpg)을
-# 이미 구성하므로 바로 설치한다. cuda-keyring을 다시 설치하면 동일 저장소 URI에 대해
-# Signed-By가 충돌하는 소스 항목이 생겨 apt가 깨진다(INSTALL_ERROR).
+# NVPL LAPACK/BLAS — runtime libraries linked by the Jetson torch wheel.
+# The base nvidia/cuda image already configures the CUDA apt repo + keyring (Signed-By=cuda-archive-keyring.gpg),
+# so we install directly. Reinstalling cuda-keyring would add a conflicting source entry for the same
+# repo URI (Signed-By conflict) and break apt (INSTALL_ERROR).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libnvpl-lapack0 libnvpl-blas0 && \
     rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# 2) uv + Python 3.12 가상환경
+# 2) uv + Python 3.12 virtual environment
 # -----------------------------------------------------------------------------
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/opt/gr00t-venv/bin:/usr/local/cuda/bin:$PATH"
@@ -83,8 +83,8 @@ ENV CUDA_HOME=/usr/local/cuda-13.0
 ENV CUDA_PATH=/usr/local/cuda-13.0
 
 # -----------------------------------------------------------------------------
-# 3) PyTorch (aarch64/CUDA13) — Jetson AI Lab 인덱스에서 검증된 핀으로 설치
-#    이것이 from-scratch의 핵심. 이 인덱스가 NVIDIA pre-built torch를 제공한다.
+# 3) PyTorch (aarch64/CUDA13) — installed from the Jetson AI Lab index with verified pins
+#    This is the core of the from-scratch build. This index provides NVIDIA pre-built torch.
 # -----------------------------------------------------------------------------
 RUN uv pip install --python /opt/gr00t-venv/bin/python \
         --index-url "${JETSON_INDEX}" \
@@ -92,19 +92,19 @@ RUN uv pip install --python /opt/gr00t-venv/bin/python \
         "torchvision==${TORCHVISION_VERSION}" \
         "triton==${TRITON_VERSION}"
 
-# cuDSS — Jetson torch 휠이 libcudss.so.0를 링크하지만 CUDA 베이스 이미지에 없고
-# Jetson torch 휠도 pip 의존성으로 끌어오지 않는다. 동작 검증된 groot1.7
-# com.groot.docker-build와 동일하게 nvidia-cudss-cu13를 설치하고 그 lib 경로를 노출한다.
+# cuDSS — the Jetson torch wheel links libcudss.so.0, which is not in the CUDA base image and
+# is not pulled in as a pip dependency by the Jetson torch wheel. Same as the proven groot1.7
+# com.groot.docker-build: install nvidia-cudss-cu13 and expose its lib path.
 RUN uv pip install --python /opt/gr00t-venv/bin/python nvidia-cudss-cu13
 
-# site-packages 경로(torchcodec 빌드/런타임 LD_LIBRARY_PATH에 사용) — cuDSS·cuDNN 포함
+# site-packages paths (used in the torchcodec build/runtime LD_LIBRARY_PATH) — includes cuDSS/cuDNN
 ENV LD_LIBRARY_PATH="/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cu13/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudss/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/usr/local/cuda-13.0/lib64"
 
-# cuDNN + CUPTI는 cudnn-devel 베이스 이미지가 제공한다(추가 설치 불필요).
+# cuDNN + CUPTI are provided by the cudnn-devel base image (no extra install needed).
 
 # -----------------------------------------------------------------------------
-# 4) torchcodec — 시스템 FFmpeg 대상으로 소스 빌드 (install_deps.sh와 동일 방식)
-#    lerobot의 비디오 디코딩/인코딩 경로에 필요.
+# 4) torchcodec — source-built against the system FFmpeg (same approach as install_deps.sh)
+#    Needed by lerobot's video decode/encode path.
 # -----------------------------------------------------------------------------
 RUN uv pip install --python /opt/gr00t-venv/bin/python setuptools && \
     NVIDIA_LIB_DIRS="$(find /opt/gr00t-venv/lib/python3.12/site-packages/nvidia -name lib -type d 2>/dev/null | tr '\n' ':')" && \
@@ -117,10 +117,10 @@ RUN uv pip install --python /opt/gr00t-venv/bin/python setuptools && \
     cd / && rm -rf /tmp/torchcodec
 
 # -----------------------------------------------------------------------------
-# 5) lerobot + 로봇/카메라/IPC 의존성
-#    - lerobot은 so101_follower 포함 commit, --no-deps (torch 덮어쓰기 방지)
-#    - lerobot이 실제로 import하는 경량 패키지만 일반 설치
-#    - feetech/pyserial/opencv/awsiotsdk도 --no-deps로 torch 보호
+# 5) lerobot + robot/camera/IPC dependencies
+#    - lerobot: the commit that includes so101_follower, --no-deps (prevents overwriting torch)
+#    - install only the lightweight packages lerobot actually imports (normal install)
+#    - feetech/pyserial/opencv/awsiotsdk also --no-deps to protect torch
 # -----------------------------------------------------------------------------
 RUN uv pip install --python /opt/gr00t-venv/bin/python \
         draccus==0.10.0 deepdiff pyyaml einops numpy==1.26.4 boto3 rerun-sdk \
@@ -132,13 +132,13 @@ RUN uv pip install --python /opt/gr00t-venv/bin/python \
         "lerobot @ git+https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
 
 # -----------------------------------------------------------------------------
-# 6) 검증: lerobot-record 진입점이 존재하는가
+# 6) Verify: does the lerobot-record entry point exist?
 # -----------------------------------------------------------------------------
 RUN test -x /opt/gr00t-venv/bin/lerobot-record && \
     echo "OK: lerobot-record present" || \
     (echo "ERROR: lerobot-record missing" && exit 1)
 
-# collect.py가 docker run 시 -c "lerobot-record ..."로 명령을 주입하므로 bash 진입점.
+# collect.py injects the command at docker run via -c "lerobot-record ...", so bash is the entry point.
 # checkov:skip=CKV_DOCKER_3: lerobot-record must run as root to access the robot arms
 #   (/dev/ttyACM*), cameras (/dev/cam_*) and the NVIDIA runtime; a non-root user would break device access.
 HEALTHCHECK CMD test -x /opt/gr00t-venv/bin/lerobot-record || exit 1

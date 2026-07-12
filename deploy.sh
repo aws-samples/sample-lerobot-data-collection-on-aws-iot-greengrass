@@ -1,6 +1,6 @@
 #!/bin/bash
-# deploy.sh — 데이터 수집 시스템 전체 배포
-# 사용법: bash deploy.sh [THING_NAME] [THING_GROUP] [REGION]
+# deploy.sh — full deployment of the data collection system
+# Usage: bash deploy.sh [THING_NAME] [THING_GROUP] [REGION]
 set -euo pipefail
 
 THING_NAME="${1:-lerobot-device}"
@@ -20,7 +20,7 @@ echo "============================================"
 echo ""
 
 # --- Step 1: CloudFormation ---
-echo ">>> [1/6] CloudFormation 배포..."
+echo ">>> [1/6] Deploying CloudFormation..."
 aws cloudformation deploy \
   --template-file infra/cloudformation.yaml \
   --stack-name "$STACK_NAME" \
@@ -29,7 +29,7 @@ aws cloudformation deploy \
   --region "$REGION" \
   --no-fail-on-empty-changeset
 
-# 출력값 추출
+# Extract output values
 CF_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' --output text)
 UI_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
@@ -41,13 +41,13 @@ echo "   CloudFront: $CF_URL"
 echo "   UI Bucket:  $UI_BUCKET"
 echo "   Data Bucket: $DATA_BUCKET"
 
-# --- Step 2: 웹 UI 업로드 ---
-echo ">>> [2/6] 웹 UI 업로드..."
+# --- Step 2: Upload web UI ---
+echo ">>> [2/6] Uploading web UI..."
 aws s3 cp web-ui/index.html "s3://${UI_BUCKET}/index.html" \
   --content-type text/html --region "$REGION"
 
-# --- Step 3: TES Role S3 권한 ---
-echo ">>> [3/6] TES Role S3 권한 추가..."
+# --- Step 3: TES Role S3 permissions ---
+echo ">>> [3/6] Adding TES Role S3 permissions..."
 aws iam put-role-policy \
   --role-name GreengrassV2TokenExchangeRole \
   --policy-name LeRobotDataCollectionS3 \
@@ -58,16 +58,16 @@ aws iam put-role-policy \
       \"Action\": [\"s3:PutObject\", \"s3:GetObject\", \"s3:ListBucket\"],
       \"Resource\": [\"arn:aws:s3:::${DATA_BUCKET}\", \"arn:aws:s3:::${DATA_BUCKET}/*\"]
     }]
-  }" 2>/dev/null && echo "   ✅ 권한 추가됨" || echo "   ⏭️  이미 존재"
+  }" 2>/dev/null && echo "   ✅ Permission added" || echo "   ⏭️  Already exists"
 
-# --- Step 4: 컴포넌트 등록 ---
-echo ">>> [4/6] 컴포넌트 등록..."
+# --- Step 4: Register component ---
+echo ">>> [4/6] Registering component..."
 aws greengrassv2 create-component-version \
   --inline-recipe "fileb://components/com.lerobot.data-collection/recipe.yaml" \
-  --region "$REGION" 2>/dev/null && echo "   ✅ 등록됨" || echo "   ⏭️  이미 존재"
+  --region "$REGION" 2>/dev/null && echo "   ✅ Registered" || echo "   ⏭️  Already exists"
 
-# --- Step 5: Greengrass 배포 ---
-echo ">>> [5/6] Greengrass 배포..."
+# --- Step 5: Greengrass deployment ---
+echo ">>> [5/6] Deploying to Greengrass..."
 TARGET_ARN="arn:aws:iot:${REGION}:${ACCOUNT_ID}:thinggroup/${THING_GROUP}"
 
 aws greengrassv2 create-deployment \
@@ -84,23 +84,23 @@ aws greengrassv2 create-deployment \
   --deployment-policies '{"componentUpdatePolicy":{"action":"SKIP_NOTIFY_COMPONENTS"},"failureHandlingPolicy":"DO_NOTHING"}' \
   --region "$REGION"
 
-# --- Step 6: 완료 ---
+# --- Step 6: Done ---
 echo ""
-echo ">>> [6/6] IoT Endpoint 확인..."
+echo ">>> [6/6] Checking IoT endpoint..."
 IOT_ENDPOINT=$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --region "$REGION" --query endpointAddress --output text)
 
 echo ""
 echo "============================================"
-echo " ✅ 배포 완료!"
+echo " ✅ Deployment complete!"
 echo "============================================"
 echo ""
-echo " 웹 UI:       $CF_URL"
+echo " Web UI:       $CF_URL"
 echo " IoT Endpoint: $IOT_ENDPOINT"
 echo " Thing Name:   $THING_NAME"
 echo " Data Bucket:  $DATA_BUCKET"
 echo " Login:        use the <WEB_USERNAME>/<WEB_PASSWORD> you configured (see README; do NOT use demo defaults)"
 echo ""
-echo " 배포 상태 확인:"
+echo " Check deployment status:"
 echo "   aws greengrassv2 list-installed-components \\"
 echo "     --core-device-thing-name $THING_NAME --region $REGION"
 echo ""

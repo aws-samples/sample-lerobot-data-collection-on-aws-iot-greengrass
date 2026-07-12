@@ -1,170 +1,231 @@
 ---
-RecipeFormatVersion: "2020-01-25"
-ComponentName: "com.lerobot.data-collection.gpu"
-ComponentVersion: "1.0.0"
-ComponentType: "aws.greengrass.generic"
-ComponentDescription: "LeRobot data collection — GPU(NVENC) accelerated video encoding\
-  \ variant. 기존 com.lerobot.data-collection 의 복사본이며 인코딩만 GPU 로 가속(별도 이미지 태그). 원본 컴\
-  포넌트/이미지/collect.py 는 건드리지 않음."
-ComponentPublisher: "Custom"
+RecipeFormatVersion: '2020-01-25'
+ComponentName: com.lerobot.data-collection.gpu
+ComponentVersion: 1.0.0
+ComponentType: aws.greengrass.generic
+ComponentDescription: LeRobot data collection — GPU(NVENC) accelerated video encoding variant.
+ComponentPublisher: Custom
 ComponentConfiguration:
   DefaultConfiguration:
-    leaderPort: "/dev/ttyACM0"
-    followerPort: "/dev/ttyACM1"
-    robotType: "so101"
-    frontCameraIndex: "/dev/cam_front"
-    wristCameraIndex: "/dev/cam_wrist"
-    cameraWidth: "640"
-    cameraHeight: "480"
-    cameraFps: "30"
-    langInstruction: "pick orange"
-    datasetName: "pick_orange_demo"
-    numEpisodes: "50"
-    episodeLength: "300"
-    datasetDir: "/home/arobot/Desktop/physical-ai/so-101/outputs"
-    s3Bucket: ""
-    s3Prefix: "datasets/"
-    thingName: "lerobot-device"
-    region: "ap-northeast-2"
-    kvsStreamName: "thor-001-camera"
-    dataImage: "lerobot-data-collection-gpu:1.0.0"
-    gpuEncode: "1"
-    videoCodec: "h264_nvenc"
-    lerobotCommit: "c75455a6de5c818fa1bb69fb2d92423e86c70475"
-    torchVersion: "2.10.0"
-    torchvisionVersion: "0.25.0"
-    torchcodecVersion: "0.10.0"
-    tritonVersion: "3.5.0"
-    jetsonTorchIndex: "https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple"
+    leaderPort: /dev/ttyACM0
+    followerPort: /dev/ttyACM1
+    robotType: so101
+    frontCameraIndex: /dev/cam_front
+    wristCameraIndex: /dev/cam_wrist
+    cameraWidth: '640'
+    cameraHeight: '480'
+    cameraFps: '30'
+    langInstruction: pick orange
+    datasetName: pick_orange_demo
+    numEpisodes: '50'
+    episodeLength: '300'
+    datasetDir: /home/arobot/Desktop/physical-ai/so-101/outputs
+    s3Bucket: ''
+    s3Prefix: datasets/
+    thingName: lerobot-device
+    region: ap-northeast-2
+    kvsStreamName: thor-001-camera
+    dataImage: lerobot-data-collection-gpu:1.0.0
+    gpuEncode: '1'
+    videoCodec: h264_nvenc
+    lerobotCommit: c75455a6de5c818fa1bb69fb2d92423e86c70475
+    torchVersion: 2.10.0
+    torchvisionVersion: 0.25.0
+    torchcodecVersion: 0.10.0
+    tritonVersion: 3.5.0
+    jetsonTorchIndex: https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple
     accessControl:
       aws.greengrass.ipc.mqttproxy:
         com.lerobot.data-collection.gpu:pub:1:
-          policyDescription: "Publish status, video and file listing"
+          policyDescription: Publish status, video and file listing
           operations:
-          - "aws.greengrass#PublishToIoTCore"
+          - aws.greengrass#PublishToIoTCore
           resources:
-          - "lerobot/+/collect/status"
-          - "lerobot/+/collect/video"
-          - "lerobot/+/collect/files"
-          - "lerobot/+/collect/kvs"
-          - "$aws/things/+/shadow/name/episodes/update"
+          - lerobot/+/collect/status
+          - lerobot/+/collect/video
+          - lerobot/+/collect/files
+          - lerobot/+/collect/kvs
+          - $aws/things/+/shadow/name/episodes/update
         com.lerobot.data-collection.gpu:sub:1:
-          policyDescription: "Subscribe to commands"
+          policyDescription: Subscribe to commands
           operations:
-          - "aws.greengrass#SubscribeToIoTCore"
+          - aws.greengrass#SubscribeToIoTCore
           resources:
-          - "lerobot/+/collect/command"
+          - lerobot/+/collect/command
 Manifests:
 - Platform:
-    os: "linux"
-    architecture: "aarch64"
+    os: linux
+    architecture: aarch64
   Lifecycle:
     install:
       RequiresPrivilege: true
-      Script: "set -e\nmkdir -p /home/arobot/Desktop/physical-ai/so-101/outputs\n\
-        pip3 install --break-system-packages -q awsiotsdk boto3 pyarrow 2>/dev/null\
-        \ || true\n\n# ---------------------------------------------------------------\n\
-        # GPU 변형: 원본 minimal 이미지와 동일한 스택을 빌드하되,\n#  (1) ffmpeg NVENC shim 을 넣어 lerobot\
-        \ 의 libsvtav1(CPU AV1) 인코딩을\n#      h264_nvenc(GPU) 로 치환 — 실패 시 원본 인자로 CPU\
-        \ 폴백(안전).\n#  (2) ENV GPU_ENCODE / VIDEO_CODEC baked → 컨테이너 상속.\n# 별도 태그($dataImage)로\
-        \ 빌드하므로 원본 이미지와 충돌 없음. Idempotent.\n# ---------------------------------------------------------------\n\
-        DATA_IMAGE=\"{configuration:/dataImage}\"\nLEROBOT_COMMIT=\"{configuration:/lerobotCommit}\"\
-        \nTORCH_VERSION=\"{configuration:/torchVersion}\"\nTORCHVISION_VERSION=\"\
-        {configuration:/torchvisionVersion}\"\nTORCHCODEC_VERSION=\"{configuration:/torchcodecVersion}\"\
-        \nTRITON_VERSION=\"{configuration:/tritonVersion}\"\nJETSON_INDEX=\"{configuration:/jetsonTorchIndex}\"\
-        \n\nif docker images --format '{{.Repository}}:{{.Tag}}' | grep -q \"^${DATA_IMAGE}$\"\
-        ; then\n  echo \"[install] $DATA_IMAGE already exists — skipping build\"\n\
-        \  exit 0\nfi\n\nARCH=\"$(uname -m)\"\nif [ \"$ARCH\" != \"aarch64\" ]; then\n\
-        \  echo \"[install] WARNING: standalone build targets aarch64 (Jetson Thor);\
-        \ detected $ARCH\"\nfi\n\nBUILD_DIR=\"/tmp/lerobot-data-collection-gpu-build\"\
-        \nrm -rf \"$BUILD_DIR\" && mkdir -p \"$BUILD_DIR\"\n\n# NVENC ffmpeg shim:\
-        \ lerobot 이 호출하는 `ffmpeg`(PATH) 를 가로채,\n# -vcodec libsvtav1 → -vcodec $VIDEO_CODEC(h264_nvenc),\
-        \ -crf → -cq 로 치환,\n# svtav1 전용 파라미터 제거. NVENC 실패 시 원본 인자로 실제 ffmpeg 재실행(CPU\
-        \ 폴백).\ncat > \"$BUILD_DIR/ffmpeg-nvenc-shim\" << 'SHIMEOF'\n#!/bin/bash\n\
-        REAL=/usr/bin/ffmpeg\nif [ \"${GPU_ENCODE:-1}\" = \"1\" ] && printf '%s\\\
-        n' \"$@\" | grep -q 'libsvtav1'; then\n  args=(); skip=0\n  for a in \"$@\"\
-        ; do\n    if [ \"$skip\" = \"1\" ]; then skip=0; continue; fi\n    case \"\
-        $a\" in\n      libsvtav1) args+=(\"${VIDEO_CODEC:-h264_nvenc}\");;\n     \
-        \ -svtav1-params) skip=1;;\n      -crf) args+=(\"-cq\");;\n      *) args+=(\"\
-        $a\");;\n    esac\n  done\n  if \"$REAL\" \"${args[@]}\"; then exit 0; fi\n\
-        \  echo \"[ffmpeg-nvenc-shim] NVENC encode failed — falling back to CPU (original\
-        \ args)\" >&2\nfi\nexec \"$REAL\" \"$@\"\nSHIMEOF\n\n# Self-contained Dockerfile\
-        \ (원본 minimal + NVENC shim/ENV).\ncat > \"$BUILD_DIR/Dockerfile\" << 'DKEOF'\n\
-        FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04\nENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute,video\n\
-        ENV DEBIAN_FRONTEND=noninteractive\nENV UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv\n\
-        ARG TORCH_VERSION\nARG TORCHVISION_VERSION\nARG TORCHCODEC_VERSION\nARG TRITON_VERSION\n\
-        ARG JETSON_INDEX\nARG LEROBOT_COMMIT\nRUN apt-get update && apt-get install\
-        \ -y --no-install-recommends \\\n        python3 python3-venv python3-dev\
-        \ \\\n        git git-lfs curl ca-certificates \\\n        build-essential\
-        \ pkg-config pybind11-dev \\\n        ffmpeg libavdevice-dev libavfilter-dev\
-        \ libavformat-dev \\\n        libavcodec-dev libavutil-dev libswresample-dev\
-        \ libswscale-dev \\\n        libgl1 libglib2.0-0 \\\n    && rm -rf /var/lib/apt/lists/*\
-        \ && git lfs install\nRUN apt-get update && apt-get install -y --no-install-recommends\
-        \ \\\n        libnvpl-lapack0 libnvpl-blas0 && \\\n    rm -rf /var/lib/apt/lists/*\n\
-        RUN curl -LsSf https://astral.sh/uv/install.sh | sh\nENV PATH=\"/root/.local/bin:/opt/gr00t-venv/bin:/usr/local/cuda/bin:$PATH\"\
-        \nRUN uv venv /opt/gr00t-venv --python 3.12\nENV VIRTUAL_ENV=/opt/gr00t-venv\n\
-        ENV CUDA_HOME=/usr/local/cuda-13.0\nRUN uv pip install --python /opt/gr00t-venv/bin/python\
-        \ --index-url \"${JETSON_INDEX}\" \\\n        \"torch==${TORCH_VERSION}\"\
-        \ \"torchvision==${TORCHVISION_VERSION}\" \"triton==${TRITON_VERSION}\"\n\
-        RUN uv pip install --python /opt/gr00t-venv/bin/python nvidia-cudss-cu13\n\
-        ENV LD_LIBRARY_PATH=\"/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cu13/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudss/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/usr/local/cuda-13.0/lib64\"\
-        \nRUN apt-get update && apt-get install -y --no-install-recommends cmake &&\
-        \ \\\n    rm -rf /var/lib/apt/lists/*\nRUN uv pip install --python /opt/gr00t-venv/bin/python\
-        \ setuptools && \\\n    NV=\"$(find /opt/gr00t-venv/lib/python3.12/site-packages/nvidia\
-        \ -name lib -type d 2>/dev/null | tr '\\n' ':')\" && \\\n    export LD_LIBRARY_PATH=\"\
-        /opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:${NV}${LD_LIBRARY_PATH}\"\
-        \ && \\\n    export CPATH=\"${CUDA_HOME}/include:${CPATH:-}\" && \\\n    git\
-        \ clone --depth 1 --branch \"v${TORCHCODEC_VERSION}\" https://github.com/pytorch/torchcodec.git\
-        \ /tmp/tc && \\\n    cd /tmp/tc && I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1\
-        \ \\\n      uv pip install --python /opt/gr00t-venv/bin/python . --no-build-isolation\
-        \ && \\\n    cd / && rm -rf /tmp/tc\nRUN uv pip install --python /opt/gr00t-venv/bin/python\
-        \ \\\n        draccus==0.10.0 deepdiff pyyaml einops numpy==1.26.4 boto3 rerun-sdk\
-        \ \\\n        datasets diffusers \"huggingface-hub[hf-transfer,cli]\" accelerate\
-        \ \\\n        pynput wandb gymnasium \"imageio[ffmpeg]\" termcolor safetensors\
-        \ av jsonlines && \\\n    uv pip install --python /opt/gr00t-venv/bin/python\
-        \ --no-deps \\\n        feetech-servo-sdk pyserial opencv-python-headless\
-        \ awsiotsdk && \\\n    uv pip install --python /opt/gr00t-venv/bin/python\
-        \ --no-deps \\\n        \"lerobot @ git+https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}\"\
-        \nRUN test -x /opt/gr00t-venv/bin/lerobot-record || (echo \"lerobot-record\
-        \ missing\" && exit 1)\n# --- External control channel patch (FIFO) --- (원\
-        본과 동일)\nRUN CU=$(find /opt/gr00t-venv -path '*/lerobot/utils/control_utils.py'\
-        \ | head -1) && \\\n    test -n \"$CU\" && \\\n    echo 'CgojID09PSBHcmVlbmdyYXNzIGV4dGVybmFsIGNvbnRyb2wgY2hhbm5lbCAoYXBwZW5kZWQgYnkgZGF0YS1jb2xsZWN0aW9uIGltYWdlKSA9PT0KZGVmIGluaXRfa2V5Ym9hcmRfbGlzdGVuZXIoKTogICMgbm9xYTogRjgxMSAgKGludGVudGlvbmFsIG92ZXJyaWRlLCBsYXN0IGRlZiB3aW5zKQogICAgaW1wb3J0IG9zLCB0aHJlYWRpbmcsIHRpbWUgYXMgX3RpbWUKICAgIGV2ZW50cyA9IHsiZXhpdF9lYXJseSI6IEZhbHNlLCAicmVyZWNvcmRfZXBpc29kZSI6IEZhbHNlLCAic3RvcF9yZWNvcmRpbmciOiBGYWxzZX0KCiAgICBmaWZvX3BhdGggPSBvcy5lbnZpcm9uLmdldCgiTEVST0JPVF9DT05UUk9MX0ZJRk8iKQogICAgaWYgZmlmb19wYXRoOgogICAgICAgIGRlZiBfd2F0Y2hfZmlmbygpOgogICAgICAgICAgICB3aGlsZSBUcnVlOgogICAgICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgICAgIHdpdGggb3BlbihmaWZvX3BhdGgsICJyIikgYXMgZjoKICAgICAgICAgICAgICAgICAgICAgICAgZm9yIGxpbmUgaW4gZjoKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNtZCA9IGxpbmUuc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiBjbWQgPT0gIm5leHQiOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByaW50KCJbQ1RSTF0gbmV4dCAtPiBleGl0X2Vhcmx5IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGVsaWYgY21kID09ICJyZXJlY29yZCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSByZXJlY29yZCIsIGZsdXNoPVRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJyZXJlY29yZF9lcGlzb2RlIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBlbGlmIGNtZCA9PSAic3RvcCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSBzdG9wIC0+IHN0b3BfcmVjb3JkaW5nIiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgICAgICAgICAgICAgIF90aW1lLnNsZWVwKDAuNSkKICAgICAgICB0aHJlYWRpbmcuVGhyZWFkKHRhcmdldD1fd2F0Y2hfZmlmbywgZGFlbW9uPVRydWUpLnN0YXJ0KCkKICAgICAgICBwcmludCgiW0NUUkxdIEZJRk8gY29udHJvbCB3YXRjaGluZyAlcyIgJSBmaWZvX3BhdGgsIGZsdXNoPVRydWUpCgogICAgdHJ5OgogICAgICAgIGZyb20gcHlucHV0IGltcG9ydCBrZXlib2FyZAoKICAgICAgICBkZWYgb25fcHJlc3Moa2V5KToKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgaWYga2V5ID09IGtleWJvYXJkLktleS5yaWdodDoKICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgIGVsaWYga2V5ID09IGtleWJvYXJkLktleS5sZWZ0OgogICAgICAgICAgICAgICAgICAgIGV2ZW50c1sicmVyZWNvcmRfZXBpc29kZSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgICAgIGV2ZW50c1siZXhpdF9lYXJseSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgZWxpZiBrZXkgPT0ga2V5Ym9hcmQuS2V5LmVzYzoKICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICBwYXNzCgogICAgICAgIGxpc3RlbmVyID0ga2V5Ym9hcmQuTGlzdGVuZXIob25fcHJlc3M9b25fcHJlc3MpCiAgICAgICAgbGlzdGVuZXIuc3RhcnQoKQogICAgICAgIHJldHVybiBsaXN0ZW5lciwgZXZlbnRzCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBOb25lLCBldmVudHMK'\
-        \ | base64 -d >> \"$CU\" && \\\n    echo \"[install] control_utils.py FIFO\
-        \ patch applied to $CU\"\n# --- GPU: NVENC ffmpeg shim + ENV (원본 대비 추가된 부분\
-        ) ---\nCOPY ffmpeg-nvenc-shim /usr/local/bin/ffmpeg\nRUN chmod +x /usr/local/bin/ffmpeg\
-        \ && \\\n    echo \"[install] NVENC ffmpeg shim installed at /usr/local/bin/ffmpeg\
-        \ (before /usr/bin)\"\nENV GPU_ENCODE=1\nENV VIDEO_CODEC=h264_nvenc\nWORKDIR\
-        \ /workspace\nENTRYPOINT [\"/bin/bash\"]\nDKEOF\n\necho \"[install] building\
-        \ GPU variant $DATA_IMAGE (this can take a while) ...\"\ndocker build -t \"\
-        $DATA_IMAGE\" \\\n  --build-arg TORCH_VERSION=\"$TORCH_VERSION\" \\\n  --build-arg\
-        \ TORCHVISION_VERSION=\"$TORCHVISION_VERSION\" \\\n  --build-arg TORCHCODEC_VERSION=\"\
-        $TORCHCODEC_VERSION\" \\\n  --build-arg TRITON_VERSION=\"$TRITON_VERSION\"\
-        \ \\\n  --build-arg JETSON_INDEX=\"$JETSON_INDEX\" \\\n  --build-arg LEROBOT_COMMIT=\"\
-        $LEROBOT_COMMIT\" \\\n  \"$BUILD_DIR\"\nrm -rf \"$BUILD_DIR\"\necho \"[install]\
-        \ build complete: $DATA_IMAGE\"\n"
+      Script: |
+        set -e
+        mkdir -p /home/arobot/Desktop/physical-ai/so-101/outputs
+        pip3 install --break-system-packages -q awsiotsdk boto3 pyarrow 2>/dev/null || true
+
+        # ---------------------------------------------------------------
+        # GPU variant: builds the same stack as the original minimal image, but
+        #  (1) installs an ffmpeg NVENC shim so lerobot's libsvtav1 (CPU AV1) encoding
+        #      is replaced with h264_nvenc (GPU) — falls back to CPU with the original args on failure (safe).
+        #  (2) bakes ENV GPU_ENCODE / VIDEO_CODEC → inherited by the container.
+        # Built under a separate tag ($dataImage), so it never conflicts with the original image. Idempotent.
+        # ---------------------------------------------------------------
+        DATA_IMAGE="{configuration:/dataImage}"
+        LEROBOT_COMMIT="{configuration:/lerobotCommit}"
+        TORCH_VERSION="{configuration:/torchVersion}"
+        TORCHVISION_VERSION="{configuration:/torchvisionVersion}"
+        TORCHCODEC_VERSION="{configuration:/torchcodecVersion}"
+        TRITON_VERSION="{configuration:/tritonVersion}"
+        JETSON_INDEX="{configuration:/jetsonTorchIndex}"
+
+        if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${DATA_IMAGE}$"; then
+          echo "[install] $DATA_IMAGE already exists — skipping build"
+          exit 0
+        fi
+
+        ARCH="$(uname -m)"
+        if [ "$ARCH" != "aarch64" ]; then
+          echo "[install] WARNING: standalone build targets aarch64 (Jetson Thor); detected $ARCH"
+        fi
+
+        BUILD_DIR="/tmp/lerobot-data-collection-gpu-build"
+        rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
+
+        # NVENC ffmpeg shim: intercepts the `ffmpeg` (on PATH) that lerobot invokes,
+        # replacing -vcodec libsvtav1 -> -vcodec $VIDEO_CODEC (h264_nvenc) and -crf -> -cq,
+        # and removing svtav1-only params. On NVENC failure, re-runs the real ffmpeg with the original args (CPU fallback).
+        cat > "$BUILD_DIR/ffmpeg-nvenc-shim" << 'SHIMEOF'
+        #!/bin/bash
+        REAL=/usr/bin/ffmpeg
+        if [ "${GPU_ENCODE:-1}" = "1" ] && printf '%s\n' "$@" | grep -q 'libsvtav1'; then
+          args=(); skip=0
+          for a in "$@"; do
+            if [ "$skip" = "1" ]; then skip=0; continue; fi
+            case "$a" in
+              libsvtav1) args+=("${VIDEO_CODEC:-h264_nvenc}");;
+              -svtav1-params) skip=1;;
+              -crf) args+=("-cq");;
+              *) args+=("$a");;
+            esac
+          done
+          if "$REAL" "${args[@]}"; then exit 0; fi
+          echo "[ffmpeg-nvenc-shim] NVENC encode failed — falling back to CPU (original args)" >&2
+        fi
+        exec "$REAL" "$@"
+        SHIMEOF
+
+        # Self-contained Dockerfile (original minimal + NVENC shim/ENV).
+        cat > "$BUILD_DIR/Dockerfile" << 'DKEOF'
+        FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
+        ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute,video
+        ENV DEBIAN_FRONTEND=noninteractive
+        ENV UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv
+        ARG TORCH_VERSION
+        ARG TORCHVISION_VERSION
+        ARG TORCHCODEC_VERSION
+        ARG TRITON_VERSION
+        ARG JETSON_INDEX
+        ARG LEROBOT_COMMIT
+        RUN apt-get update && apt-get install -y --no-install-recommends \
+                python3 python3-venv python3-dev \
+                git git-lfs curl ca-certificates \
+                build-essential pkg-config pybind11-dev \
+                ffmpeg libavdevice-dev libavfilter-dev libavformat-dev \
+                libavcodec-dev libavutil-dev libswresample-dev libswscale-dev \
+                libgl1 libglib2.0-0 \
+            && rm -rf /var/lib/apt/lists/* && git lfs install
+        RUN apt-get update && apt-get install -y --no-install-recommends \
+                libnvpl-lapack0 libnvpl-blas0 && \
+            rm -rf /var/lib/apt/lists/*
+        RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+        ENV PATH="/root/.local/bin:/opt/gr00t-venv/bin:/usr/local/cuda/bin:$PATH"
+        RUN uv venv /opt/gr00t-venv --python 3.12
+        ENV VIRTUAL_ENV=/opt/gr00t-venv
+        ENV CUDA_HOME=/usr/local/cuda-13.0
+        RUN uv pip install --python /opt/gr00t-venv/bin/python --index-url "${JETSON_INDEX}" \
+                "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}" "triton==${TRITON_VERSION}"
+        RUN uv pip install --python /opt/gr00t-venv/bin/python nvidia-cudss-cu13
+        ENV LD_LIBRARY_PATH="/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cu13/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudss/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/usr/local/cuda-13.0/lib64"
+        RUN apt-get update && apt-get install -y --no-install-recommends cmake && \
+            rm -rf /var/lib/apt/lists/*
+        RUN uv pip install --python /opt/gr00t-venv/bin/python setuptools && \
+            NV="$(find /opt/gr00t-venv/lib/python3.12/site-packages/nvidia -name lib -type d 2>/dev/null | tr '\n' ':')" && \
+            export LD_LIBRARY_PATH="/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:${NV}${LD_LIBRARY_PATH}" && \
+            export CPATH="${CUDA_HOME}/include:${CPATH:-}" && \
+            git clone --depth 1 --branch "v${TORCHCODEC_VERSION}" https://github.com/pytorch/torchcodec.git /tmp/tc && \
+            cd /tmp/tc && I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1 \
+              uv pip install --python /opt/gr00t-venv/bin/python . --no-build-isolation && \
+            cd / && rm -rf /tmp/tc
+        RUN uv pip install --python /opt/gr00t-venv/bin/python \
+                draccus==0.10.0 deepdiff pyyaml einops numpy==1.26.4 boto3 rerun-sdk \
+                datasets diffusers "huggingface-hub[hf-transfer,cli]" accelerate \
+                pynput wandb gymnasium "imageio[ffmpeg]" termcolor safetensors av jsonlines && \
+            uv pip install --python /opt/gr00t-venv/bin/python --no-deps \
+                feetech-servo-sdk pyserial opencv-python-headless awsiotsdk && \
+            uv pip install --python /opt/gr00t-venv/bin/python --no-deps \
+                "lerobot @ git+https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+        RUN test -x /opt/gr00t-venv/bin/lerobot-record || (echo "lerobot-record missing" && exit 1)
+        # --- External control channel patch (FIFO) --- (same as the original)
+        RUN CU=$(find /opt/gr00t-venv -path '*/lerobot/utils/control_utils.py' | head -1) && \
+            test -n "$CU" && \
+            echo 'CgojID09PSBHcmVlbmdyYXNzIGV4dGVybmFsIGNvbnRyb2wgY2hhbm5lbCAoYXBwZW5kZWQgYnkgZGF0YS1jb2xsZWN0aW9uIGltYWdlKSA9PT0KZGVmIGluaXRfa2V5Ym9hcmRfbGlzdGVuZXIoKTogICMgbm9xYTogRjgxMSAgKGludGVudGlvbmFsIG92ZXJyaWRlLCBsYXN0IGRlZiB3aW5zKQogICAgaW1wb3J0IG9zLCB0aHJlYWRpbmcsIHRpbWUgYXMgX3RpbWUKICAgIGV2ZW50cyA9IHsiZXhpdF9lYXJseSI6IEZhbHNlLCAicmVyZWNvcmRfZXBpc29kZSI6IEZhbHNlLCAic3RvcF9yZWNvcmRpbmciOiBGYWxzZX0KCiAgICBmaWZvX3BhdGggPSBvcy5lbnZpcm9uLmdldCgiTEVST0JPVF9DT05UUk9MX0ZJRk8iKQogICAgaWYgZmlmb19wYXRoOgogICAgICAgIGRlZiBfd2F0Y2hfZmlmbygpOgogICAgICAgICAgICB3aGlsZSBUcnVlOgogICAgICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgICAgIHdpdGggb3BlbihmaWZvX3BhdGgsICJyIikgYXMgZjoKICAgICAgICAgICAgICAgICAgICAgICAgZm9yIGxpbmUgaW4gZjoKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNtZCA9IGxpbmUuc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiBjbWQgPT0gIm5leHQiOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByaW50KCJbQ1RSTF0gbmV4dCAtPiBleGl0X2Vhcmx5IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGVsaWYgY21kID09ICJyZXJlY29yZCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSByZXJlY29yZCIsIGZsdXNoPVRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJyZXJlY29yZF9lcGlzb2RlIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBlbGlmIGNtZCA9PSAic3RvcCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSBzdG9wIC0+IHN0b3BfcmVjb3JkaW5nIiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgICAgICAgICAgICAgIF90aW1lLnNsZWVwKDAuNSkKICAgICAgICB0aHJlYWRpbmcuVGhyZWFkKHRhcmdldD1fd2F0Y2hfZmlmbywgZGFlbW9uPVRydWUpLnN0YXJ0KCkKICAgICAgICBwcmludCgiW0NUUkxdIEZJRk8gY29udHJvbCB3YXRjaGluZyAlcyIgJSBmaWZvX3BhdGgsIGZsdXNoPVRydWUpCgogICAgdHJ5OgogICAgICAgIGZyb20gcHlucHV0IGltcG9ydCBrZXlib2FyZAoKICAgICAgICBkZWYgb25fcHJlc3Moa2V5KToKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgaWYga2V5ID09IGtleWJvYXJkLktleS5yaWdodDoKICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgIGVsaWYga2V5ID09IGtleWJvYXJkLktleS5sZWZ0OgogICAgICAgICAgICAgICAgICAgIGV2ZW50c1sicmVyZWNvcmRfZXBpc29kZSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgICAgIGV2ZW50c1siZXhpdF9lYXJseSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgZWxpZiBrZXkgPT0ga2V5Ym9hcmQuS2V5LmVzYzoKICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICBwYXNzCgogICAgICAgIGxpc3RlbmVyID0ga2V5Ym9hcmQuTGlzdGVuZXIob25fcHJlc3M9b25fcHJlc3MpCiAgICAgICAgbGlzdGVuZXIuc3RhcnQoKQogICAgICAgIHJldHVybiBsaXN0ZW5lciwgZXZlbnRzCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBOb25lLCBldmVudHMK' | base64 -d >> "$CU" && \
+            echo "[install] control_utils.py FIFO patch applied to $CU"
+        # --- GPU: NVENC ffmpeg shim + ENV (added on top of the original) ---
+        COPY ffmpeg-nvenc-shim /usr/local/bin/ffmpeg
+        RUN chmod +x /usr/local/bin/ffmpeg && \
+            echo "[install] NVENC ffmpeg shim installed at /usr/local/bin/ffmpeg (before /usr/bin)"
+        ENV GPU_ENCODE=1
+        ENV VIDEO_CODEC=h264_nvenc
+        WORKDIR /workspace
+        ENTRYPOINT ["/bin/bash"]
+        DKEOF
+
+        echo "[install] building GPU variant $DATA_IMAGE (this can take a while) ..."
+        docker build -t "$DATA_IMAGE" \
+          --build-arg TORCH_VERSION="$TORCH_VERSION" \
+          --build-arg TORCHVISION_VERSION="$TORCHVISION_VERSION" \
+          --build-arg TORCHCODEC_VERSION="$TORCHCODEC_VERSION" \
+          --build-arg TRITON_VERSION="$TRITON_VERSION" \
+          --build-arg JETSON_INDEX="$JETSON_INDEX" \
+          --build-arg LEROBOT_COMMIT="$LEROBOT_COMMIT" \
+          "$BUILD_DIR"
+        rm -rf "$BUILD_DIR"
+        echo "[install] build complete: $DATA_IMAGE"
       Timeout: 7200
     run:
       RequiresPrivilege: true
-      Script: "export THING_NAME=\"{configuration:/thingName}\"\nexport LEADER_PORT=\"\
-        {configuration:/leaderPort}\"\nexport FOLLOWER_PORT=\"{configuration:/followerPort}\"\
-        \nexport FRONT_CAMERA=\"{configuration:/frontCameraIndex}\"\nexport WRIST_CAMERA=\"\
-        {configuration:/wristCameraIndex}\"\nexport CAMERA_WIDTH=\"{configuration:/cameraWidth}\"\
-        \nexport CAMERA_HEIGHT=\"{configuration:/cameraHeight}\"\nexport CAMERA_FPS=\"\
-        {configuration:/cameraFps}\"\nexport LANG_INSTRUCTION=\"{configuration:/langInstruction}\"\
-        \nexport DATASET_NAME=\"{configuration:/datasetName}\"\nexport NUM_EPISODES=\"\
-        {configuration:/numEpisodes}\"\nexport EPISODE_LENGTH=\"{configuration:/episodeLength}\"\
-        \nexport DATASET_DIR=\"{configuration:/datasetDir}\"\nexport S3_BUCKET=\"\
-        {configuration:/s3Bucket}\"\nexport S3_PREFIX=\"{configuration:/s3Prefix}\"\
-        \nexport DATA_IMAGE=\"{configuration:/dataImage}\"\nexport KVS_STREAM=\"{configuration:/kvsStreamName}\"\
-        \nexport AWS_DEFAULT_REGION=\"{configuration:/region}\"\nexport GPU_ENCODE=\"\
-        {configuration:/gpuEncode}\"\nexport VIDEO_CODEC=\"{configuration:/videoCodec}\"\
-        \nmkdir -p /opt/groot\n# collect.py 는 원본과 동일한 로직 → 원본 버전 폴더에서 재사용(별도 업로드 불\
-        필요).\naws s3 cp \"s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/1.0.0/collect.py\"\
-        \ /opt/groot/collect.py --region ap-northeast-2\npython3 -u /opt/groot/collect.py\n"
+      Script: |
+        export THING_NAME="{configuration:/thingName}"
+        export LEADER_PORT="{configuration:/leaderPort}"
+        export FOLLOWER_PORT="{configuration:/followerPort}"
+        export FRONT_CAMERA="{configuration:/frontCameraIndex}"
+        export WRIST_CAMERA="{configuration:/wristCameraIndex}"
+        export CAMERA_WIDTH="{configuration:/cameraWidth}"
+        export CAMERA_HEIGHT="{configuration:/cameraHeight}"
+        export CAMERA_FPS="{configuration:/cameraFps}"
+        export LANG_INSTRUCTION="{configuration:/langInstruction}"
+        export DATASET_NAME="{configuration:/datasetName}"
+        export NUM_EPISODES="{configuration:/numEpisodes}"
+        export EPISODE_LENGTH="{configuration:/episodeLength}"
+        export DATASET_DIR="{configuration:/datasetDir}"
+        export S3_BUCKET="{configuration:/s3Bucket}"
+        export S3_PREFIX="{configuration:/s3Prefix}"
+        export DATA_IMAGE="{configuration:/dataImage}"
+        export KVS_STREAM="{configuration:/kvsStreamName}"
+        export AWS_DEFAULT_REGION="{configuration:/region}"
+        export GPU_ENCODE="{configuration:/gpuEncode}"
+        export VIDEO_CODEC="{configuration:/videoCodec}"
+        mkdir -p /opt/groot
+        # collect.py is identical to the original -> reused from the original version folder (no separate upload needed).
+        aws s3 cp "s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/1.0.0/collect.py" /opt/groot/collect.py --region ap-northeast-2
+        python3 -u /opt/groot/collect.py
     shutdown:
       RequiresPrivilege: true
-      Script: "docker stop lerobot-record 2>/dev/null || true\ndocker rm   lerobot-record\
-        \ 2>/dev/null || true\npkill -f \"collect.py\" 2>/dev/null || true\n"
+      Script: |
+        docker stop lerobot-record 2>/dev/null || true
+        docker rm   lerobot-record 2>/dev/null || true
+        pkill -f "collect.py" 2>/dev/null || true
       Timeout: 10
   Artifacts: []
 Lifecycle: {}

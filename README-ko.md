@@ -37,6 +37,11 @@ https://github.com/user-attachments/assets/e9d57dbb-1a8e-4d8f-bfc2-8e36aabdb341
 
 ## 아키텍처
 
+![아키텍처 — AWS IoT Greengrass 기반 LeRobot 데이터 수집](docs/architecture.png)
+
+<details>
+<summary>텍스트 다이어그램</summary>
+
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │  🌐  Web 콘솔  (CloudFront + MQTT over WSS, Custom Authorizer 로그인)│
@@ -71,6 +76,8 @@ https://github.com/user-attachments/assets/e9d57dbb-1a8e-4d8f-bfc2-8e36aabdb341
 │      data/*.parquet · videos/observation.images.*/*.mp4 · meta/*   │
 └────────────────────────────────────────────────────────────────────┘
 ```
+
+</details>
 
 - **제어/데이터 평면 분리**: 명령·상태·에피소드 window(Shadow)는 IoT Core, 데이터셋은 S3, 실시간·다시보기 영상은 KVS로 각각 흐릅니다.
 - **영상 2경로**: 데이터셋 mp4(정확한 학습 데이터)와 KVS 스트림(모니터링/다시보기)은 별도 파이프라인입니다.

@@ -32,7 +32,7 @@ Jetson AGX Thor(JetPack 7 / CUDA 13, aarch64)에서 검증되었습니다.
 
 ## Demo Video
   
-https://github.com/user-attachments/assets/e9d57dbb-1a8e-4d8f-bfc2-8e36aabdb341
+https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 
 
 ## 아키텍처

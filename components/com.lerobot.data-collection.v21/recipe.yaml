@@ -1,0 +1,184 @@
+RecipeFormatVersion: "2020-01-25"
+ComponentName: com.lerobot.data-collection.v21
+ComponentVersion: "1.0.0"
+ComponentDescription: "LeRobot data collection — LeRobot dataset codebase_version v2.1 variant. Saves each episode as its own file (data/chunk-000/episode_000000.parquet, videos/chunk-000/<key>/episode_000000.mp4). Same as com.lerobot.data-collection but pins lerobot to v0.3.3 (the last release that produces the v2.1 per-episode format). Built under a separate image tag; does not touch the original/gpu components."
+ComponentPublisher: Custom
+ComponentConfiguration:
+  DefaultConfiguration:
+    leaderPort: "/dev/ttyACM0"
+    followerPort: "/dev/ttyACM1"
+    robotType: "so101"
+    frontCameraIndex: "/dev/cam_front"
+    wristCameraIndex: "/dev/cam_wrist"
+    cameraWidth: "640"
+    cameraHeight: "480"
+    cameraFps: "30"
+    langInstruction: "pick orange"
+    datasetName: "pick_orange_demo"
+    numEpisodes: "50"
+    episodeLength: "300"
+    datasetDir: "/home/arobot/Desktop/physical-ai/so-101/outputs"
+    s3Bucket: ""
+    s3Prefix: "datasets/"
+    thingName: "lerobot-device"
+    region: "ap-northeast-2"
+    kvsStreamName: "thor-001-camera"
+    dataImage: "lerobot-data-collection-v21:1.0.0"
+    lerobotCommit: "b883328e6c95681ca90a18b102e4ae5e1f91e2bf"
+    torchVersion: "2.10.0"
+    torchvisionVersion: "0.25.0"
+    torchcodecVersion: "0.10.0"
+    tritonVersion: "3.5.0"
+    jetsonTorchIndex: "https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple"
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        "com.lerobot.data-collection.v21:pub:1":
+          policyDescription: "Publish status, video and file listing"
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+          resources:
+            - "lerobot/+/collect/status"
+            - "lerobot/+/collect/video"
+            - "lerobot/+/collect/files"
+            - "lerobot/+/collect/kvs"
+            - "$aws/things/+/shadow/name/episodes/update"
+        "com.lerobot.data-collection.v21:sub:1":
+          policyDescription: "Subscribe to commands"
+          operations:
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "lerobot/+/collect/command"
+Manifests:
+  - Platform:
+      os: linux
+      architecture: aarch64
+    Lifecycle:
+      install:
+        RequiresPrivilege: true
+        Script: |
+          set -e
+          mkdir -p /home/arobot/Desktop/physical-ai/so-101/outputs
+          pip3 install --break-system-packages -q awsiotsdk boto3 pyarrow 2>/dev/null || true
+
+          DATA_IMAGE="{configuration:/dataImage}"
+          LEROBOT_COMMIT="{configuration:/lerobotCommit}"
+          TORCH_VERSION="{configuration:/torchVersion}"
+          TORCHVISION_VERSION="{configuration:/torchvisionVersion}"
+          TORCHCODEC_VERSION="{configuration:/torchcodecVersion}"
+          TRITON_VERSION="{configuration:/tritonVersion}"
+          JETSON_INDEX="{configuration:/jetsonTorchIndex}"
+
+          if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${DATA_IMAGE}$"; then
+            echo "[install] $DATA_IMAGE already exists — skipping build"
+            exit 0
+          fi
+
+          ARCH="$(uname -m)"
+          if [ "$ARCH" != "aarch64" ]; then
+            echo "[install] WARNING: standalone build targets aarch64 (Jetson Thor); detected $ARCH"
+          fi
+
+          BUILD_DIR="/tmp/lerobot-data-collection-v21-build"
+          rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
+
+          cat > "$BUILD_DIR/Dockerfile" << 'DKEOF'
+          FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
+          ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
+          ENV DEBIAN_FRONTEND=noninteractive
+          ENV UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv
+          ARG TORCH_VERSION
+          ARG TORCHVISION_VERSION
+          ARG TORCHCODEC_VERSION
+          ARG TRITON_VERSION
+          ARG JETSON_INDEX
+          ARG LEROBOT_COMMIT
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                  python3 python3-venv python3-dev \
+                  git git-lfs curl ca-certificates \
+                  build-essential pkg-config pybind11-dev \
+                  ffmpeg libavdevice-dev libavfilter-dev libavformat-dev \
+                  libavcodec-dev libavutil-dev libswresample-dev libswscale-dev \
+                  libgl1 libglib2.0-0 \
+              && rm -rf /var/lib/apt/lists/* && git lfs install
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                  libnvpl-lapack0 libnvpl-blas0 && \
+              rm -rf /var/lib/apt/lists/*
+          RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+          ENV PATH="/root/.local/bin:/opt/gr00t-venv/bin:/usr/local/cuda/bin:$PATH"
+          RUN uv venv /opt/gr00t-venv --python 3.12
+          ENV VIRTUAL_ENV=/opt/gr00t-venv
+          ENV CUDA_HOME=/usr/local/cuda-13.0
+          RUN uv pip install --python /opt/gr00t-venv/bin/python --index-url "${JETSON_INDEX}" \
+                  "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}" "triton==${TRITON_VERSION}"
+          RUN uv pip install --python /opt/gr00t-venv/bin/python nvidia-cudss-cu13
+          ENV LD_LIBRARY_PATH="/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cu13/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudss/lib:/opt/gr00t-venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/usr/local/cuda-13.0/lib64"
+          RUN apt-get update && apt-get install -y --no-install-recommends cmake && \
+              rm -rf /var/lib/apt/lists/*
+          RUN uv pip install --python /opt/gr00t-venv/bin/python setuptools && \
+              NV="$(find /opt/gr00t-venv/lib/python3.12/site-packages/nvidia -name lib -type d 2>/dev/null | tr '\n' ':')" && \
+              export LD_LIBRARY_PATH="/opt/gr00t-venv/lib/python3.12/site-packages/torch/lib:${NV}${LD_LIBRARY_PATH}" && \
+              export CPATH="${CUDA_HOME}/include:${CPATH:-}" && \
+              git clone --depth 1 --branch "v${TORCHCODEC_VERSION}" https://github.com/pytorch/torchcodec.git /tmp/tc && \
+              cd /tmp/tc && I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1 \
+                uv pip install --python /opt/gr00t-venv/bin/python . --no-build-isolation && \
+              cd / && rm -rf /tmp/tc
+          RUN uv pip install --python /opt/gr00t-venv/bin/python \
+                  draccus==0.10.0 deepdiff pyyaml einops numpy==1.26.4 boto3 rerun-sdk \
+                  datasets diffusers "huggingface-hub[hf-transfer,cli]" accelerate \
+                  pynput wandb gymnasium "imageio[ffmpeg]" termcolor safetensors av jsonlines && \
+              uv pip install --python /opt/gr00t-venv/bin/python --no-deps \
+                  feetech-servo-sdk pyserial opencv-python-headless awsiotsdk && \
+              uv pip install --python /opt/gr00t-venv/bin/python --no-deps \
+                  "lerobot @ git+https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+          RUN test -x /opt/gr00t-venv/bin/lerobot-record || (echo "lerobot-record missing" && exit 1)
+          RUN CU=$(find /opt/gr00t-venv -path '*/lerobot/utils/control_utils.py' | head -1) && \
+              test -n "$CU" && \
+              echo 'CgojID09PSBHcmVlbmdyYXNzIGV4dGVybmFsIGNvbnRyb2wgY2hhbm5lbCAoYXBwZW5kZWQgYnkgZGF0YS1jb2xsZWN0aW9uIGltYWdlKSA9PT0KZGVmIGluaXRfa2V5Ym9hcmRfbGlzdGVuZXIoKTogICMgbm9xYTogRjgxMSAgKGludGVudGlvbmFsIG92ZXJyaWRlLCBsYXN0IGRlZiB3aW5zKQogICAgaW1wb3J0IG9zLCB0aHJlYWRpbmcsIHRpbWUgYXMgX3RpbWUKICAgIGV2ZW50cyA9IHsiZXhpdF9lYXJseSI6IEZhbHNlLCAicmVyZWNvcmRfZXBpc29kZSI6IEZhbHNlLCAic3RvcF9yZWNvcmRpbmciOiBGYWxzZX0KCiAgICBmaWZvX3BhdGggPSBvcy5lbnZpcm9uLmdldCgiTEVST0JPVF9DT05UUk9MX0ZJRk8iKQogICAgaWYgZmlmb19wYXRoOgogICAgICAgIGRlZiBfd2F0Y2hfZmlmbygpOgogICAgICAgICAgICB3aGlsZSBUcnVlOgogICAgICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgICAgIHdpdGggb3BlbihmaWZvX3BhdGgsICJyIikgYXMgZjoKICAgICAgICAgICAgICAgICAgICAgICAgZm9yIGxpbmUgaW4gZjoKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNtZCA9IGxpbmUuc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiBjbWQgPT0gIm5leHQiOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByaW50KCJbQ1RSTF0gbmV4dCAtPiBleGl0X2Vhcmx5IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGVsaWYgY21kID09ICJyZXJlY29yZCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSByZXJlY29yZCIsIGZsdXNoPVRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJyZXJlY29yZF9lcGlzb2RlIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBlbGlmIGNtZCA9PSAic3RvcCI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoIltDVFJMXSBzdG9wIC0+IHN0b3BfcmVjb3JkaW5nIiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgICAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgICAgICAgICAgICAgIF90aW1lLnNsZWVwKDAuNSkKICAgICAgICB0aHJlYWRpbmcuVGhyZWFkKHRhcmdldD1fd2F0Y2hfZmlmbywgZGFlbW9uPVRydWUpLnN0YXJ0KCkKICAgICAgICBwcmludCgiW0NUUkxdIEZJRk8gY29udHJvbCB3YXRjaGluZyAlcyIgJSBmaWZvX3BhdGgsIGZsdXNoPVRydWUpCgogICAgdHJ5OgogICAgICAgIGZyb20gcHlucHV0IGltcG9ydCBrZXlib2FyZAoKICAgICAgICBkZWYgb25fcHJlc3Moa2V5KToKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgaWYga2V5ID09IGtleWJvYXJkLktleS5yaWdodDoKICAgICAgICAgICAgICAgICAgICBldmVudHNbImV4aXRfZWFybHkiXSA9IFRydWUKICAgICAgICAgICAgICAgIGVsaWYga2V5ID09IGtleWJvYXJkLktleS5sZWZ0OgogICAgICAgICAgICAgICAgICAgIGV2ZW50c1sicmVyZWNvcmRfZXBpc29kZSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgICAgIGV2ZW50c1siZXhpdF9lYXJseSJdID0gVHJ1ZQogICAgICAgICAgICAgICAgZWxpZiBrZXkgPT0ga2V5Ym9hcmQuS2V5LmVzYzoKICAgICAgICAgICAgICAgICAgICBldmVudHNbInN0b3BfcmVjb3JkaW5nIl0gPSBUcnVlCiAgICAgICAgICAgICAgICAgICAgZXZlbnRzWyJleGl0X2Vhcmx5Il0gPSBUcnVlCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICBwYXNzCgogICAgICAgIGxpc3RlbmVyID0ga2V5Ym9hcmQuTGlzdGVuZXIob25fcHJlc3M9b25fcHJlc3MpCiAgICAgICAgbGlzdGVuZXIuc3RhcnQoKQogICAgICAgIHJldHVybiBsaXN0ZW5lciwgZXZlbnRzCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBOb25lLCBldmVudHMK' | base64 -d >> "$CU" && \
+              echo "[install] control_utils.py FIFO patch applied to $CU"
+          WORKDIR /workspace
+          ENTRYPOINT ["/bin/bash"]
+          DKEOF
+
+          echo "[install] building standalone $DATA_IMAGE (this can take a while) ..."
+          docker build -t "$DATA_IMAGE" \
+            --build-arg TORCH_VERSION="$TORCH_VERSION" \
+            --build-arg TORCHVISION_VERSION="$TORCHVISION_VERSION" \
+            --build-arg TORCHCODEC_VERSION="$TORCHCODEC_VERSION" \
+            --build-arg TRITON_VERSION="$TRITON_VERSION" \
+            --build-arg JETSON_INDEX="$JETSON_INDEX" \
+            --build-arg LEROBOT_COMMIT="$LEROBOT_COMMIT" \
+            "$BUILD_DIR"
+          rm -rf "$BUILD_DIR"
+          echo "[install] build complete: $DATA_IMAGE"
+        Timeout: 7200
+      run:
+        RequiresPrivilege: true
+        Script: |
+          export THING_NAME="{configuration:/thingName}"
+          export LEADER_PORT="{configuration:/leaderPort}"
+          export FOLLOWER_PORT="{configuration:/followerPort}"
+          export FRONT_CAMERA="{configuration:/frontCameraIndex}"
+          export WRIST_CAMERA="{configuration:/wristCameraIndex}"
+          export CAMERA_WIDTH="{configuration:/cameraWidth}"
+          export CAMERA_HEIGHT="{configuration:/cameraHeight}"
+          export CAMERA_FPS="{configuration:/cameraFps}"
+          export LANG_INSTRUCTION="{configuration:/langInstruction}"
+          export DATASET_NAME="{configuration:/datasetName}"
+          export NUM_EPISODES="{configuration:/numEpisodes}"
+          export EPISODE_LENGTH="{configuration:/episodeLength}"
+          export DATASET_DIR="{configuration:/datasetDir}"
+          export S3_BUCKET="{configuration:/s3Bucket}"
+          export S3_PREFIX="{configuration:/s3Prefix}"
+          export DATA_IMAGE="{configuration:/dataImage}"
+          export KVS_STREAM="{configuration:/kvsStreamName}"
+          export AWS_DEFAULT_REGION="{configuration:/region}"
+          mkdir -p /opt/groot
+          aws s3 cp "s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection.v21/1.0.0/collect.py" /opt/groot/collect.py --region ap-northeast-2
+          python3 -u /opt/groot/collect.py
+      shutdown:
+        RequiresPrivilege: true
+        Script: |
+          docker stop lerobot-record 2>/dev/null || true
+          docker rm lerobot-record 2>/dev/null || true
+          pkill -f "collect.py" 2>/dev/null || true
+        Timeout: 10

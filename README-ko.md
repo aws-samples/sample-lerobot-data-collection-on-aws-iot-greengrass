@@ -87,6 +87,9 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 ```
 .
 ├── components/com.lerobot.data-collection.gpu/recipe.yaml  # NVENC 인코딩 변형 recipe
+├── components/com.lerobot.data-collection.v21/recipe.yaml  # LeRobot dataset v2.1(에피소드별) 변형 recipe
+├── components/com.lerobot.data-collection.v21/artifacts/collect.py  # v21 collect.py (폐기=재녹화, 리셋 카운트다운, recSeq)
+├── components/com.lerobot.data-collection.v21.gpu/recipe.yaml  # v2.1 + 실제 GPU(NVENC) 인코딩 변형 recipe (v21 collect.py 재사용)
 ├── components/com.lerobot.data-collection/recipe.yaml   # 원본/레퍼런스 recipe (이미지 self-build)
 ├── components/com.groot.kvs-webrtc-ingest/recipe.yaml   # (선택) 컬러 카메라 → KVS WebRTC 라이브/에피소드 재생 소스
 ├── artifacts/collect.py                                 # 컨트롤러 (MQTT 제어 · 녹화 · S3 업로드 · 에피소드 shadow)
@@ -280,12 +283,18 @@ aws greengrassv2 create-component-version \
 |---|---|---|
 | `com.lerobot.data-collection` | 1.0.0 | CPU(SVT-AV1) 영상 인코딩 데이터 수집 레시피 — 레퍼런스 변형 |
 | `com.lerobot.data-collection.gpu` | 1.0.0 | NVENC ffmpeg shim 적용 데이터 수집 레시피(GPU 인코딩 시도, 실패 시 CPU 폴백); `collect.py`는 버전 폴더에서 재사용 |
+| `com.lerobot.data-collection.v21` | 1.0.0 | **lerobot v0.3.3** 고정 → **LeRobot dataset v2.1(에피소드별 개별 파일:** `data/chunk-000/episode_000000.parquet`, `videos/chunk-000/<key>/episode_000000.mp4`**)** 생성. 전용 `collect.py`로 **폐기(Discard)=현재 에피소드 재녹화**(세션 전체 종료 아님), 리셋 구간 카운트다운, `recSeq` 실시간 녹화시작 신호 추가 |
+| `com.lerobot.data-collection.v21.gpu` | 1.0.0 | v2.1(에피소드별) + **실제 GPU(NVENC) 영상 인코딩**. 이미지가 lerobot `encode_video_frames`를 **시스템 `ffmpeg` CLI + `h264_nvenc`** 로 인코딩하도록 패치(실패 시 원본 PyAV/CPU SVT-AV1로 폴백). Jetson Thor에서 CPU 대비 **약 2.7배 빠름** ([GPU_ENCODING.md](GPU_ENCODING.md) 참고). `.v21`의 `collect.py` 재사용 |
 | `com.groot.kvs-webrtc-ingest` | 1.0.0 | 컬러 카메라 → KVS WebRTC ingestion(라이브/에피소드 재생 소스 `thor-001-webrtc`). clockoverlay로 디바이스 시각(HH:MM:SS) 굽기 + 뷰어 STS 크레덴셜 발급 |
 
 > `.gpu`는 `collect.py`를 별도로 패키징하지 않고 원본 경로
 > `s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/<ver>/collect.py`
-> 를 런타임에 fetch합니다. **레시피의 fetch 경로 버전과 collect.py 업로드 버전을 반드시 일치**시키세요.
-> 두 데이터수집 컴포넌트는 동일 MQTT 토픽을 쓰므로 **동시에 켜지 말 것**(택1).
+> 를 런타임에 fetch합니다. `.v21`은 컴포넌트 전용 경로
+> `s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection.v21/<ver>/collect.py`
+> 를 fetch합니다. **레시피의 fetch 경로 버전과 collect.py 업로드 버전을 반드시 일치**시키세요.
+> 네 데이터수집 컴포넌트는 동일 MQTT 토픽을 쓰므로 **둘 이상 동시에 켜지 말 것**(택1). `com.lerobot.data-collection`/`.gpu`는 v3.0(패킹) 포맷, `.v21`/`.v21.gpu`는 v2.1(에피소드별) 포맷을 만듭니다.
+>
+> **GPU 인코딩 주의:** `.gpu`의 NVENC *ffmpeg shim*은 실제로 **동작하지 않습니다** — 이 lerobot 버전은 `ffmpeg` CLI가 아니라 **PyAV로 in-process 인코딩**하므로 shim이 안 걸리고 `.gpu`도 CPU AV1을 출력합니다. `.v21.gpu`는 lerobot 인코더가 시스템 `ffmpeg` CLI(`h264_nvenc`)를 직접 호출하도록 패치해 이 문제를 해결한, **실제 GPU 인코딩(H.264)** 변형입니다. [GPU_ENCODING.md](GPU_ENCODING.md) 참고.
 
 ### collect.py 주요 기능
 - MQTT 제어: `start` / `stop`(현재 에피소드 저장 후 다음) / `endSession`(세션 종료) / `discard` / `upload` / `list` / `uploadFiles` / `kvsLive` / `kvsEpisodes`.

@@ -90,6 +90,9 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 ```
 .
 ├── components/com.lerobot.data-collection.gpu/recipe.yaml  # NVENC encoding variant recipe
+├── components/com.lerobot.data-collection.v21/recipe.yaml  # LeRobot dataset v2.1 (per-episode) variant recipe
+├── components/com.lerobot.data-collection.v21/artifacts/collect.py  # v21 collect.py (Discard=re-record, reset countdown, recSeq)
+├── components/com.lerobot.data-collection.v21.gpu/recipe.yaml  # v2.1 + real GPU(NVENC) encoding variant recipe (reuses v21 collect.py)
 ├── components/com.lerobot.data-collection/recipe.yaml   # original/reference recipe (image self-build)
 ├── components/com.groot.kvs-webrtc-ingest/recipe.yaml   # (optional) color camera → KVS WebRTC live/episode playback source
 ├── artifacts/collect.py                                 # controller (MQTT control · recording · S3 upload · episode shadow)
@@ -285,12 +288,18 @@ The components and features included in this sample (sensitive values are placeh
 |---|---|---|
 | `com.lerobot.data-collection` | 1.0.0 | Data-collection recipe with CPU (SVT-AV1) video encoding — reference variant |
 | `com.lerobot.data-collection.gpu` | 1.0.0 | Data-collection recipe with an NVENC ffmpeg shim (attempts GPU encoding, falls back to CPU on failure); reuses the same `collect.py` from the version folder |
+| `com.lerobot.data-collection.v21` | 1.0.0 | Data-collection recipe pinned to **lerobot v0.3.3** → produces **LeRobot dataset v2.1 (per-episode files:** `data/chunk-000/episode_000000.parquet`, `videos/chunk-000/<key>/episode_000000.mp4`**)**. Ships its own `collect.py` where **Discard re-records the current episode** (not a full-session stop), adds a reset-window countdown, and a `recSeq` real-time recording-start signal |
+| `com.lerobot.data-collection.v21.gpu` | 1.0.0 | v2.1 (per-episode) **with real GPU (NVENC) video encoding**. The image patches lerobot's `encode_video_frames` to encode the PNG frames via the **system `ffmpeg` CLI with `h264_nvenc`** (falls back to the original PyAV/CPU SVT-AV1 on any failure). Measured **~2.7x faster** encoding than CPU on Jetson Thor (see [GPU_ENCODING.md](GPU_ENCODING.md)). Reuses `.v21`'s `collect.py` |
 | `com.groot.kvs-webrtc-ingest` | 1.0.0 | Color camera → KVS WebRTC ingestion (live/episode-playback source `thor-001-webrtc`). Burns the device clock (HH:MM:SS) via clockoverlay + issues viewer STS credentials |
 
 > `.gpu` does not package `collect.py` separately; it fetches the original path
 > `s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/<ver>/collect.py`
-> at runtime. **Always keep the recipe's fetch path version and the uploaded collect.py version identical.**
-> The two data-collection components use the same MQTT topics, so **do not run them at the same time** (pick one).
+> at runtime. `.v21` fetches its own component-namespaced path
+> `s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection.v21/<ver>/collect.py`.
+> **Always keep the recipe's fetch path version and the uploaded collect.py version identical.**
+> The four data-collection components use the same MQTT topics, so **do not run more than one at the same time** (pick one). `com.lerobot.data-collection` / `.gpu` produce the v3.0 (packed) format; `.v21` / `.v21.gpu` produce the v2.1 (per-episode) format.
+>
+> **On GPU encoding:** the `.gpu` variant's NVENC *ffmpeg shim* does **not** actually engage, because this lerobot version encodes in-process via **PyAV** (not the `ffmpeg` CLI), so `.gpu` still outputs CPU AV1. `.v21.gpu` fixes this by patching lerobot's encoder to call the system `ffmpeg` CLI (`h264_nvenc`) directly — that is the variant that produces real GPU-encoded (H.264) video. See [GPU_ENCODING.md](GPU_ENCODING.md).
 
 ### collect.py main features
 - MQTT control: `start` / `stop` (save current episode then next) / `endSession` (end session) / `discard` / `upload` / `list` / `uploadFiles` / `kvsLive` / `kvsEpisodes`.

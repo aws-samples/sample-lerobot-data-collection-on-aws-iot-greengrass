@@ -187,7 +187,7 @@ aws iam put-role-policy --role-name GreengrassV2TokenExchangeRole \
 Always keep the **recipe fetch-path version == uploaded version** identical.
 ```bash
 VER=1.0.0   # must match the fetch path in the recipe run script
-aws s3 cp artifacts/collect.py \
+aws s3 cp components/com.lerobot.data-collection/artifacts/collect.py \
   s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/$VER/collect.py \
   --region <REGION> --profile <PROFILE>
 ```

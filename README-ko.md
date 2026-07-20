@@ -91,8 +91,9 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 ├── components/com.lerobot.data-collection.v21/artifacts/collect.py  # v21 collect.py (폐기=재녹화, 리셋 카운트다운, recSeq)
 ├── components/com.lerobot.data-collection.v21.gpu/recipe.yaml  # v2.1 + 실제 GPU(NVENC) 인코딩 변형 recipe (v21 collect.py 재사용)
 ├── components/com.lerobot.data-collection/recipe.yaml   # 원본/레퍼런스 recipe (이미지 self-build)
+├── components/com.lerobot.data-collection/artifacts/collect.py      # 컨트롤러 (MQTT 제어 · 녹화 · S3 업로드 · 에피소드 shadow)
+├── components/com.lerobot.data-collection.gpu/artifacts/collect.py  # NVENC 변형용 복사본 (동일 컨트롤러)
 ├── components/com.groot.kvs-webrtc-ingest/recipe.yaml   # (선택) 컬러 카메라 → KVS WebRTC 라이브/에피소드 재생 소스
-├── artifacts/collect.py                                 # 컨트롤러 (MQTT 제어 · 녹화 · S3 업로드 · 에피소드 shadow)
 ├── web-ui/index.html                                    # 관리자 웹 콘솔 (MQTT over WSS)
 ├── infra/cloudformation.yaml                            # IoT Custom Authorizer + CloudFront + S3
 ├── Dockerfile.data-collection-minimal(.md)              # 데이터 수집용 최소 이미지 레퍼런스 (recipe 인라인 빌드가 미러링)
@@ -109,7 +110,7 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 
 | 플레이스홀더 | 의미 | 나타나는 파일 |
 |---|---|---|
-| `<AWS_ACCOUNT_ID>` | AWS 계정 12자리 ID | `components/.../recipe.yaml`(데이터수집 + `kvs-webrtc-ingest`의 `viewerRoleArn`), `artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/index.html`, `COMPONENT_ARCHITECTURE.md` |
+| `<AWS_ACCOUNT_ID>` | AWS 계정 12자리 ID | `components/.../recipe.yaml`(데이터수집 + `kvs-webrtc-ingest`의 `viewerRoleArn`), `components/.../artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/index.html`, `COMPONENT_ARCHITECTURE.md` |
 | `<IOT_ENDPOINT>` | AWS IoT Core ATS 데이터 엔드포인트 (`xxxx-ats.iot.<region>.amazonaws.com`) | `web-ui/index.html` |
 | `<WEB_USERNAME>` | 웹 콘솔 로그인 사용자명 | `web-ui/index.html`, `infra/cloudformation.yaml`, 문서 |
 | `<WEB_PASSWORD>` | 웹 콘솔 로그인 비밀번호 | `web-ui/index.html`, `infra/cloudformation.yaml`, 문서 |

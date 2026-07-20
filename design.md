@@ -93,7 +93,7 @@ lerobot-data-collection/
 │   ├── com.lerobot.data-collection.gpu/recipe.yaml   # NVENC variant
 │   ├── com.lerobot.data-collection/recipe.yaml       # original/reference
 │   └── com.groot.kvs-webrtc-ingest/recipe.yaml       # color WebRTC ingestion
-├── artifacts/collect.py                              # controller (MQTT·recording·S3·shadow)
+├── components/com.lerobot.data-collection/artifacts/collect.py  # controller (MQTT·recording·S3·shadow)
 ├── web-ui/index.html                                 # web console
 ├── infra/cloudformation.yaml                         # Custom Authorizer + S3 + CloudFront
 ├── deploy.sh                                         # deployment script

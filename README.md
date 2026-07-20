@@ -94,8 +94,9 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 ├── components/com.lerobot.data-collection.v21/artifacts/collect.py  # v21 collect.py (Discard=re-record, reset countdown, recSeq)
 ├── components/com.lerobot.data-collection.v21.gpu/recipe.yaml  # v2.1 + real GPU(NVENC) encoding variant recipe (reuses v21 collect.py)
 ├── components/com.lerobot.data-collection/recipe.yaml   # original/reference recipe (image self-build)
+├── components/com.lerobot.data-collection/artifacts/collect.py      # controller (MQTT control · recording · S3 upload · episode shadow)
+├── components/com.lerobot.data-collection.gpu/artifacts/collect.py  # copy for the NVENC variant (identical controller)
 ├── components/com.groot.kvs-webrtc-ingest/recipe.yaml   # (optional) color camera → KVS WebRTC live/episode playback source
-├── artifacts/collect.py                                 # controller (MQTT control · recording · S3 upload · episode shadow)
 ├── web-ui/index.html                                    # admin web console (MQTT over WSS)
 ├── infra/cloudformation.yaml                            # IoT Custom Authorizer + CloudFront + S3
 ├── Dockerfile.data-collection-minimal(.md)              # minimal data-collection image reference (mirrored by the recipe inline build)
@@ -112,7 +113,7 @@ placeholders**. Replace the values below to match your environment before deploy
 
 | Placeholder | Meaning | Files it appears in |
 |---|---|---|
-| `<AWS_ACCOUNT_ID>` | 12-digit AWS account ID | `components/.../recipe.yaml` (data collection + `kvs-webrtc-ingest`'s `viewerRoleArn`), `artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/index.html`, `COMPONENT_ARCHITECTURE.md` |
+| `<AWS_ACCOUNT_ID>` | 12-digit AWS account ID | `components/.../recipe.yaml` (data collection + `kvs-webrtc-ingest`'s `viewerRoleArn`), `components/.../artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/index.html`, `COMPONENT_ARCHITECTURE.md` |
 | `<IOT_ENDPOINT>` | AWS IoT Core ATS data endpoint (`xxxx-ats.iot.<region>.amazonaws.com`) | `web-ui/index.html` |
 | `<WEB_USERNAME>` | Web console login username | `web-ui/index.html`, `infra/cloudformation.yaml`, docs |
 | `<WEB_PASSWORD>` | Web console login password | `web-ui/index.html`, `infra/cloudformation.yaml`, docs |

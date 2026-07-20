@@ -184,7 +184,7 @@ Manifests:
           export GPU_ENCODE="{configuration:/gpuEncode}"
           export VIDEO_CODEC="{configuration:/videoCodec}"
           mkdir -p /opt/groot
-          aws s3 cp "s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection.v21/1.0.0/collect.py" /opt/groot/collect.py --region ap-northeast-2
+          aws s3 cp "s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection.v21.gpu/1.0.0/collect.py" /opt/groot/collect.py --region ap-northeast-2
           python3 -u /opt/groot/collect.py
       shutdown:
         RequiresPrivilege: true

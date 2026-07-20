@@ -32,8 +32,9 @@ plus the GPU switches:
 
 Hardware / session / storage / torch-stack keys are the same as the original (see its README).
 
-`collect.py` is **reused from the `.v21` path** (`collect/com.lerobot.data-collection.v21/<ver>/collect.py`)
-— the encoding change lives entirely in the image, so no separate script is packaged.
+`collect.py` is **shipped in this component's `artifacts/`** and is **identical to `.v21`'s
+controller** (the GPU change lives entirely in the image). At runtime the recipe fetches it from this
+component's own namespaced path (`collect/com.lerobot.data-collection.v21.gpu/<ver>/collect.py`).
 
 > **Build-cache caveat**: `video` is added to `NVIDIA_DRIVER_CAPABILITIES` at the **END** of the
 > Dockerfile. Keep the top ENV identical to the original so the apt/torch/torchcodec layers stay
@@ -50,7 +51,9 @@ Hardware / session / storage / torch-stack keys are the same as the original (se
 ## Deploy notes
 
 - Replace placeholders (root [`README.md`](../../README.md) table); set `s3Bucket` / `thingName`.
-- Ensure the `.v21` `collect.py` is uploaded at the matching version path (this variant reuses it).
+- Upload this component's `collect.py` (in `artifacts/`) to
+  `s3://<bucket>/collect/com.lerobot.data-collection.v21.gpu/1.0.0/collect.py` (version must match the
+  recipe fetch path).
 - Verify GPU output: `ffprobe` the resulting mp4 → codec should be `h264`; `meta/info.json`
   `video.codec` = `h264`. If it shows `av1`, NVENC failed and the CPU fallback ran.
 - See [`GPU_ENCODING.md`](../../GPU_ENCODING.md) for the CPU-vs-GPU benchmark and tuning (`-cq`).

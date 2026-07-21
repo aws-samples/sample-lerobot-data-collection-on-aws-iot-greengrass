@@ -59,7 +59,7 @@ policy = {'Version':'2012-10-17','Statement':[
 ### (2) Manage web credentials safely instead of demo defaults
 - The demo auth is a **shared account + `base64(user:pass)` token**. Weak values like `admin/admin`
   are **not allowed**. Set `<WEB_USERNAME>`/`<WEB_PASSWORD>` to **strong values** and keep
-  `web-ui/index.html` and the Authorizer identical.
+  `web-ui/*.html` and the Authorizer identical.
 - Do not keep credentials as code constants; inject them via **Secrets Manager / a CloudFormation
   `NoEcho` parameter**, and compare in the Lambda using **`hmac.compare_digest`**.
 
@@ -145,7 +145,7 @@ aws cloudformation deploy \
   --region <REGION> --profile <PROFILE>
 ```
 - From the Outputs, note the web UI bucket / data bucket / CloudFront domain / IoT Authorizer name.
-- The web credentials (`<WEB_USERNAME>:<WEB_PASSWORD>`) must be **identical in `web-ui/index.html` and the Authorizer Lambda** for login to work.
+- The web credentials (`<WEB_USERNAME>:<WEB_PASSWORD>`) must be **identical in `web-ui/*.html` and the Authorizer Lambda** for login to work.
 - ⚠️ Apply the **required security hardening in §0.2 before deploying**: narrow the Authorizer policy (1), manage credentials safely (2), secure the data bucket (3).
 
 ---
@@ -327,14 +327,16 @@ rm -f cur.json deploy.json
 
 ## 10. Web UI deployment / update
 ```bash
-aws s3 cp web-ui/index.html s3://<WEB_UI_BUCKET>/index.html \
+aws s3 cp web-ui/live-p2p.html s3://<WEB_UI_BUCKET>/live-p2p.html \
+  --content-type text/html --profile <PROFILE>
+aws s3 cp web-ui/multiviewer.html s3://<WEB_UI_BUCKET>/multiviewer.html \
   --content-type text/html --region <REGION> --profile <PROFILE>
 # CloudFront invalidation
 aws cloudfront create-invalidation --distribution-id <DIST_ID> \
-  --paths "/index.html" "/" --profile <PROFILE>
+  --paths "/live-p2p.html" "/multiviewer.html" "/" --profile <PROFILE>
 ```
 - Pre-deploy checks: `node --check` on the inline JS, all-English (no Korean), balanced `<div>`/`</div>`.
-- Replace the IoT endpoint / thing / data-bucket (#bk) defaults in `web-ui/index.html` for your environment.
+- Replace the IoT endpoint / thing / data-bucket (#bk) defaults in `web-ui/*.html` for your environment.
 
 ---
 

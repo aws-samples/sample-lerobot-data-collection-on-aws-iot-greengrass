@@ -95,7 +95,9 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 ├── components/com.lerobot.data-collection/artifacts/collect.py      # 컨트롤러 (MQTT 제어 · 녹화 · S3 업로드 · 에피소드 shadow)
 ├── components/com.lerobot.data-collection.gpu/artifacts/collect.py  # NVENC 변형용 복사본 (동일 컨트롤러)
 ├── components/com.groot.kvs-webrtc-ingest/recipe.yaml   # (선택) 컬러 카메라 → KVS WebRTC 라이브/에피소드 재생 소스
-├── web-ui/index.html                                    # 관리자 웹 콘솔 (MQTT over WSS)
+├── components/com.groot.kvs-webrtc-p2p/recipe.yaml      # (선택) 저지연 P2P 라이브 + kvssink 녹화(tee) — kvs-webrtc-ingest의 <1초 대안
+├── web-ui/multiviewer.html                              # 멀티뷰어 콘솔 (KVS storage 뷰어; 클라우드 팬아웃 최대 3뷰어, 디바이스 무관)
+├── web-ui/live-p2p.html                                 # 저지연 P2P 라이브 콘솔 (기본 랜딩; <1초)
 ├── infra/cloudformation.yaml                            # IoT Custom Authorizer + CloudFront + S3
 ├── Dockerfile.data-collection-minimal(.md)              # 데이터 수집용 최소 이미지 레퍼런스 (recipe 인라인 빌드가 미러링)
 ├── deploy.sh                                            # 전체 배포 스크립트
@@ -111,11 +113,11 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 
 | 플레이스홀더 | 의미 | 나타나는 파일 |
 |---|---|---|
-| `<AWS_ACCOUNT_ID>` | AWS 계정 12자리 ID | `components/.../recipe.yaml`(데이터수집 + `kvs-webrtc-ingest`의 `viewerRoleArn`), `components/.../artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/index.html`, `COMPONENT_ARCHITECTURE.md` |
-| `<IOT_ENDPOINT>` | AWS IoT Core ATS 데이터 엔드포인트 (`xxxx-ats.iot.<region>.amazonaws.com`) | `web-ui/index.html` |
-| `<WEB_USERNAME>` | 웹 콘솔 로그인 사용자명 | `web-ui/index.html`, `infra/cloudformation.yaml`, 문서 |
-| `<WEB_PASSWORD>` | 웹 콘솔 로그인 비밀번호 | `web-ui/index.html`, `infra/cloudformation.yaml`, 문서 |
-| `<DATA_BUCKET>` | 데이터셋 업로드 S3 버킷 (배포 리전과 **동일 리전** 권장 — presign 불일치 방지) | `web-ui/index.html`(#bk 기본값), 배포 config `s3Bucket` |
+| `<AWS_ACCOUNT_ID>` | AWS 계정 12자리 ID | `components/.../recipe.yaml`(데이터수집 + `kvs-webrtc-ingest`의 `viewerRoleArn`), `components/.../artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/*.html`, `COMPONENT_ARCHITECTURE.md` |
+| `<IOT_ENDPOINT>` | AWS IoT Core ATS 데이터 엔드포인트 (`xxxx-ats.iot.<region>.amazonaws.com`) | `web-ui/*.html` |
+| `<WEB_USERNAME>` | 웹 콘솔 로그인 사용자명 | `web-ui/*.html`, `infra/cloudformation.yaml`, 문서 |
+| `<WEB_PASSWORD>` | 웹 콘솔 로그인 비밀번호 | `web-ui/*.html`, `infra/cloudformation.yaml`, 문서 |
+| `<DATA_BUCKET>` | 데이터셋 업로드 S3 버킷 (배포 리전과 **동일 리전** 권장 — presign 불일치 방지) | `web-ui/*.html`(#bk 기본값), 배포 config `s3Bucket` |
 
 \* `<AWS_ACCOUNT_ID>`는 S3 버킷 이름(`greengrass-datasets-<AWS_ACCOUNT_ID>`) 등에 사용됩니다.
    본인 버킷 이름 규칙에 맞게 조정하세요.
@@ -130,12 +132,12 @@ aws iot describe-endpoint --endpoint-type iot:Data-ATS \
 ```bash
 # macOS 기준 (Linux는 sed -i 사용)
 grep -rl '<AWS_ACCOUNT_ID>' . | xargs sed -i '' 's/<AWS_ACCOUNT_ID>/123456789012/g'
-sed -i '' 's/<IOT_ENDPOINT>/xxxxxxxxxxxxx-ats.iot.ap-northeast-2.amazonaws.com/g' web-ui/index.html
-# 웹 자격증명은 index.html 과 infra/cloudformation.yaml 양쪽을 동일하게 맞춰야 합니다.
+sed -i '' 's/<IOT_ENDPOINT>/xxxxxxxxxxxxx-ats.iot.ap-northeast-2.amazonaws.com/g' web-ui/*.html
+# 웹 자격증명은 web-ui/*.html 과 infra/cloudformation.yaml 양쪽을 동일하게 맞춰야 합니다.
 ```
 
 ### 🔐 보안 주의
-- `<WEB_USERNAME>`/`<WEB_PASSWORD>`는 **`web-ui/index.html`과 `infra/cloudformation.yaml`
+- `<WEB_USERNAME>`/`<WEB_PASSWORD>`는 **`web-ui/*.html`과 `infra/cloudformation.yaml`
   (Custom Authorizer Lambda)에 동일하게** 설정해야 로그인이 동작합니다.
 - 원본 데모는 `admin`/`admin`을 기본값으로 사용했습니다. **운영 환경에서는 반드시 강력한
   값으로 변경**하고, 가능하면 CloudFormation 파라미터/Secrets Manager로 관리하세요.
@@ -187,7 +189,7 @@ sed -i '' 's/<IOT_ENDPOINT>/xxxxxxxxxxxxx-ats.iot.ap-northeast-2.amazonaws.com/g
 ## 사용 시나리오
 
 ### 시나리오 A — 멀티 에피소드 수집 세션 (기본 흐름)
-1. **로그인** — `web-ui/index.html`(CloudFront)을 열고 `<WEB_USERNAME>`/`<WEB_PASSWORD>`로 연결.
+1. **로그인** — CloudFront 웹 콘솔을 열고 `<WEB_USERNAME>`/`<WEB_PASSWORD>`로 연결. 라이브 화면 2종: **`live-p2p.html`**(기본 랜딩, <1초 P2P) / **`multiviewer.html`**(KVS storage 뷰어; 클라우드 팬아웃 최대 3뷰어, 디바이스 무관). 아래 "라이브 화면 선택" 참고.
 2. **라이브 확인** — 우측 *Monitor* 탭 `WebRTC Live`에서 작업 공간 컬러 영상(우하단 디바이스 시각) 확인.
 3. **녹화 시작** — *Control*에서 지시어(예: `pick orange`) + 에피소드 수 입력 → **⏺ 녹화 시작**.
    상태 뱃지가 `recording`, 화면·로그에 `start episode 1`.
@@ -225,11 +227,25 @@ sed -i '' 's/<IOT_ENDPOINT>/xxxxxxxxxxxxx-ats.iot.ap-northeast-2.amazonaws.com/g
 
 ---
 
-## (선택) 라이브 영상 모니터링 — `com.groot.kvs-webrtc-ingest`
+## (선택) 라이브 영상 모니터링 — `com.groot.kvs-webrtc-p2p` 또는 `com.groot.kvs-webrtc-ingest`
 
 녹화 완료본은 S3 presigned URL로 재생하지만, **녹화 중 실시간 영상**을 보려면 지연이 큽니다.
-이 선택 컴포넌트는 **컬러 카메라 → Amazon Kinesis Video Streams(KVS) WebRTC**로 sub-second
-라이브 영상을 제공합니다. (LeRobot 데이터셋 S3 파이프라인과는 **완전히 분리**된 "운영 모니터링"용 경로입니다.)
+두 선택 컴포넌트가 **컬러 카메라 → Amazon Kinesis Video Streams(KVS) WebRTC**로 라이브 영상을
+제공합니다(둘 다 에피소드별 HLS 다시보기 유지). **하나만** 사용하세요(둘 다 같은 컬러 카메라 점유):
+
+- **`com.groot.kvs-webrtc-p2p`** — **P2P, <1초** 라이브(디바이스 → 브라우저 직결), `kvssink` tee로
+  녹화 유지. 채널당 **최대 10 뷰어**이나 **디바이스 CPU/uplink에 한계**. **저지연 운영 모니터**에 최적.
+  웹 페이지: **`live-p2p.html`**(기본 배포 세트가 이걸 사용).
+- **`com.groot.kvs-webrtc-ingest`** — **storage 세션** 라이브(디바이스 → KVS 클라우드 → 브라우저,
+  ~2~5초+). KVS 클라우드가 **multiviewer quota(3 뷰어)** 까지 팬아웃하며 **디바이스 리소스와 무관**.
+  웹 페이지: **`multiviewer.html`**.
+
+> **시나리오:** 로봇을 가까이서 보는 저지연 모니터 → **`kvs-webrtc-p2p`(`live-p2p.html`)**; 디바이스
+> 부하와 무관한 클라우드 팬아웃(최대 3 뷰어) → **`kvs-webrtc-ingest`(`multiviewer.html`)**. 상세
+> 트레이드오프 표는 각 컴포넌트 README 참고.
+
+이 섹션의 이하 내용은 storage 변형(`kvs-webrtc-ingest`) 기준입니다. P2P 변형은
+[`components/com.groot.kvs-webrtc-p2p/README.md`](components/com.groot.kvs-webrtc-p2p/README.md) 참고.
 
 - **동작**: GStreamer로 컬러 카메라를 H.264 인코딩 → KVS WebRTC **STORAGE** 마스터 샘플이
   `JoinStorageSession`으로 시그널링 채널에 media를 ingest → 브라우저가 WebRTC **뷰어**로 시청.
@@ -288,6 +304,7 @@ aws greengrassv2 create-component-version \
 | `com.lerobot.data-collection.v21` | 1.0.0 | **lerobot v0.3.3** 고정 → **LeRobot dataset v2.1(에피소드별 개별 파일:** `data/chunk-000/episode_000000.parquet`, `videos/chunk-000/<key>/episode_000000.mp4`**)** 생성. 전용 `collect.py`로 **폐기(Discard)=현재 에피소드 재녹화**(세션 전체 종료 아님), 리셋 구간 카운트다운, `recSeq` 실시간 녹화시작 신호 추가 |
 | `com.lerobot.data-collection.v21.gpu` | 1.0.0 | v2.1(에피소드별) + **실제 GPU(NVENC) 영상 인코딩**. 이미지가 lerobot `encode_video_frames`를 **시스템 `ffmpeg` CLI + `h264_nvenc`** 로 인코딩하도록 패치(실패 시 원본 PyAV/CPU SVT-AV1로 폴백). Jetson Thor에서 CPU 대비 **약 2.7배 빠름** ([GPU_ENCODING.md](GPU_ENCODING.md) 참고). 전용 `collect.py` 포함(`.v21`과 동일한 컨트롤러) |
 | `com.groot.kvs-webrtc-ingest` | 1.0.0 | 컬러 카메라 → KVS WebRTC ingestion(라이브/에피소드 재생 소스 `thor-001-webrtc`). clockoverlay로 디바이스 시각(HH:MM:SS) 굽기 + 뷰어 STS 크레덴셜 발급 |
+| `com.groot.kvs-webrtc-p2p` | 1.0.0 | 컬러 카메라 → 단일 캡처를 tee로 분기: KVS WebRTC **P2P** master(`thor-001-p2p`, <1초 라이브) + `kvssink` 녹화(`thor-001-webrtc`, HLS 재생). `kvs-webrtc-ingest`의 저지연 대안 |
 
 > `.gpu`는 `collect.py`를 별도로 패키징하지 않고 원본 경로
 > `s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/<ver>/collect.py`

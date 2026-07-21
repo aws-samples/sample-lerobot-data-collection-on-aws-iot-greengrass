@@ -9,6 +9,25 @@ the LeRobot dataset S3 pipeline.
 - **Stream/channel**: `thor-001-webrtc` (signaling channel with `MediaStorageConfiguration` ENABLED)
 - **Encoding**: GStreamer `v4l2src → videoconvert → clockoverlay → H.264`
 
+## When to use this vs `com.groot.kvs-webrtc-p2p`
+
+This component routes the live viewer through the **KVS cloud media server** (storage session), which
+adds **~2–5 s+** of latency but serves viewers **independent of device resources** (the cloud fans
+out), up to the WebRTC-ingestion **multiviewer quota (3 concurrent viewers)**. The alternative
+[`com.groot.kvs-webrtc-p2p`](../com.groot.kvs-webrtc-p2p) is **peer-to-peer (sub-second)** but the
+device (master) holds a WebRTC peer **per viewer** — up to the signaling-channel quota (10 viewers),
+yet **bounded by device CPU/uplink**.
+
+| | this (storage) | `kvs-webrtc-p2p` |
+|---|---|---|
+| Live latency | ~2–5 s+ | **~sub-second** |
+| Concurrent viewers | up to **3** (multiviewer quota); cloud fan-out, **independent of device resources** | up to **10** per channel, but **bounded by device CPU/uplink** |
+| Complexity | lower | higher (adds Producer SDK/`kvssink` tee) |
+
+**Rule of thumb:** **cloud fan-out independent of device load (≤3 viewers) → this (storage)**;
+**lowest-latency monitor → `kvs-webrtc-p2p`**. Both preserve per-episode HLS replay from
+`thor-001-webrtc`. Browser page: `multiviewer.html` (this) vs `live-p2p.html` (P2P).
+
 ## How it works
 
 1. **install** (`Timeout: 3600`) — apt-installs GStreamer + build deps, clones and builds the KVS

@@ -243,7 +243,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        DefaultRootObject: index.html
+        DefaultRootObject: live-p2p.html
         Origins:
           - Id: S3
             DomainName: !GetAtt WebUIBucket.RegionalDomainName
@@ -305,4 +305,4 @@ Outputs:
   AuthorizerName:
     Value: !Ref IoTAuthorizer
   DeployCmd:
-    Value: !Sub "aws s3 cp web-ui/index.html s3://${WebUIBucket}/index.html --content-type text/html"
+    Value: !Sub "aws s3 cp web-ui/live-p2p.html s3://${WebUIBucket}/live-p2p.html --content-type text/html; aws s3 cp web-ui/multiviewer.html s3://${WebUIBucket}/multiviewer.html --content-type text/html"

@@ -43,7 +43,10 @@ echo "   Data Bucket: $DATA_BUCKET"
 
 # --- Step 2: Upload web UI ---
 echo ">>> [2/6] Uploading web UI..."
-aws s3 cp web-ui/index.html "s3://${UI_BUCKET}/index.html" \
+aws s3 cp web-ui/multiviewer.html "s3://${UI_BUCKET}/multiviewer.html" \
+  --content-type text/html --region "$REGION"
+# P2P low-latency live screen (default landing) + multi-viewer/storage screen.
+aws s3 cp web-ui/live-p2p.html "s3://${UI_BUCKET}/live-p2p.html" \
   --content-type text/html --region "$REGION"
 
 # --- Step 3: TES Role S3 permissions ---
@@ -60,28 +63,49 @@ aws iam put-role-policy \
     }]
   }" 2>/dev/null && echo "   ✅ Permission added" || echo "   ⏭️  Already exists"
 
-# --- Step 4: Register component ---
-echo ">>> [4/6] Registering component..."
+# --- Step 4: Register components (default set: v21.gpu + kvs-webrtc-p2p) ---
+echo ">>> [4/6] Registering components..."
 aws greengrassv2 create-component-version \
-  --inline-recipe "fileb://components/com.lerobot.data-collection/recipe.yaml" \
-  --region "$REGION" 2>/dev/null && echo "   ✅ Registered" || echo "   ⏭️  Already exists"
+  --inline-recipe "fileb://components/com.lerobot.data-collection.v21.gpu/recipe.yaml" \
+  --region "$REGION" 2>/dev/null && echo "   ✅ v21.gpu registered" || echo "   ⏭️  v21.gpu already exists"
+aws greengrassv2 create-component-version \
+  --inline-recipe "fileb://components/com.groot.kvs-webrtc-p2p/recipe.yaml" \
+  --region "$REGION" 2>/dev/null && echo "   ✅ kvs-webrtc-p2p registered" || echo "   ⏭️  kvs-webrtc-p2p already exists"
+# v21.gpu fetches collect.py from S3 at runtime — upload it to the version path
+# (the recipe expects s3://greengrass-datasets-<ACCOUNT>/collect/.../1.0.0/collect.py).
+aws s3 cp components/com.lerobot.data-collection.v21.gpu/artifacts/collect.py \
+  "s3://${DATA_BUCKET}/collect/com.lerobot.data-collection.v21.gpu/1.0.0/collect.py" \
+  --region "$REGION" && echo "   ✅ collect.py uploaded"
 
-# --- Step 5: Greengrass deployment ---
+# --- Step 5: Greengrass deployment (default set: v21.gpu + kvs-webrtc-p2p) ---
 echo ">>> [5/6] Deploying to Greengrass..."
 TARGET_ARN="arn:aws:iot:${REGION}:${ACCOUNT_ID}:thinggroup/${THING_GROUP}"
+
+# NOTE: com.groot.kvs-webrtc-p2p is the (optional) low-latency monitor. It
+# requires KVS prerequisites to exist first (see components/com.groot.kvs-webrtc-p2p/README.md):
+#   - a SINGLE_MASTER P2P signaling channel (default name: thor-001-p2p), NO MediaStorageConfiguration
+#   - a KVS video stream for recording/HLS replay (default name: thor-001-webrtc)
+#   - an IAM role KvsViewerRole (viewer-only) for browser viewer credentials
+# If you don't need live monitoring, remove the kvs-webrtc-p2p block below.
 
 aws greengrassv2 create-deployment \
   --deployment-name "lerobot-data-collection-$(date +%Y%m%d%H%M)" \
   --target-arn "$TARGET_ARN" \
   --components "{
-    \"com.lerobot.data-collection\": {
-      \"componentVersion\": \"1.2.19\",
+    \"com.lerobot.data-collection.v21.gpu\": {
+      \"componentVersion\": \"1.0.0\",
       \"configurationUpdate\": {
         \"merge\": \"{\\\"thingName\\\":\\\"${THING_NAME}\\\",\\\"s3Bucket\\\":\\\"${DATA_BUCKET}\\\"}\"
       }
+    },
+    \"com.groot.kvs-webrtc-p2p\": {
+      \"componentVersion\": \"1.0.0\",
+      \"configurationUpdate\": {
+        \"merge\": \"{\\\"thingName\\\":\\\"${THING_NAME}\\\",\\\"channelName\\\":\\\"thor-001-p2p\\\",\\\"videoDevice\\\":\\\"/dev/video4\\\",\\\"viewerRoleArn\\\":\\\"arn:aws:iam::${ACCOUNT_ID}:role/KvsViewerRole\\\"}\"
+      }
     }
   }" \
-  --deployment-policies '{"componentUpdatePolicy":{"action":"SKIP_NOTIFY_COMPONENTS"},"failureHandlingPolicy":"DO_NOTHING"}' \
+  --deployment-policies '{"componentUpdatePolicy":{"action":"SKIP_NOTIFY_COMPONENTS"},"failureHandlingPolicy":"ROLLBACK"}' \
   --region "$REGION"
 
 # --- Step 6: Done ---
@@ -94,7 +118,8 @@ echo "============================================"
 echo " ✅ Deployment complete!"
 echo "============================================"
 echo ""
-echo " Web UI:       $CF_URL"
+echo " Web UI:       $CF_URL
+ P2P screen:   $CF_URL/live-p2p.html  (low-latency live monitor)"
 echo " IoT Endpoint: $IOT_ENDPOINT"
 echo " Thing Name:   $THING_NAME"
 echo " Data Bucket:  $DATA_BUCKET"

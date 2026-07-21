@@ -94,7 +94,8 @@ lerobot-data-collection/
 │   ├── com.lerobot.data-collection/recipe.yaml       # original/reference
 │   └── com.groot.kvs-webrtc-ingest/recipe.yaml       # color WebRTC ingestion
 ├── components/com.lerobot.data-collection/artifacts/collect.py  # controller (MQTT·recording·S3·shadow)
-├── web-ui/index.html                                 # web console
+├── web-ui/multiviewer.html                           # multi-viewer console (storage)
+├── web-ui/live-p2p.html                              # low-latency P2P console
 ├── infra/cloudformation.yaml                         # Custom Authorizer + S3 + CloudFront
 ├── deploy.sh                                         # deployment script
 └── Dockerfile.data-collection-minimal(.md)           # image reference

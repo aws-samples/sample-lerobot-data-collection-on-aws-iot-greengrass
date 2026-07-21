@@ -98,7 +98,9 @@ https://github.com/user-attachments/assets/ffb4a431-67ce-44cd-9650-570edc4c581c
 ├── components/com.lerobot.data-collection/artifacts/collect.py      # controller (MQTT control · recording · S3 upload · episode shadow)
 ├── components/com.lerobot.data-collection.gpu/artifacts/collect.py  # copy for the NVENC variant (identical controller)
 ├── components/com.groot.kvs-webrtc-ingest/recipe.yaml   # (optional) color camera → KVS WebRTC live/episode playback source
-├── web-ui/index.html                                    # admin web console (MQTT over WSS)
+├── components/com.groot.kvs-webrtc-p2p/recipe.yaml      # (optional) low-latency P2P live + kvssink recording (tee) — <1s alternative to kvs-webrtc-ingest
+├── web-ui/multiviewer.html                              # multi-viewer console (KVS storage viewer; cloud fan-out up to 3 viewers, device-independent)
+├── web-ui/live-p2p.html                                 # low-latency P2P live console (default landing; sub-second)
 ├── infra/cloudformation.yaml                            # IoT Custom Authorizer + CloudFront + S3
 ├── Dockerfile.data-collection-minimal(.md)              # minimal data-collection image reference (mirrored by the recipe inline build)
 ├── deploy.sh                                            # full deployment script
@@ -114,11 +116,11 @@ placeholders**. Replace the values below to match your environment before deploy
 
 | Placeholder | Meaning | Files it appears in |
 |---|---|---|
-| `<AWS_ACCOUNT_ID>` | 12-digit AWS account ID | `components/.../recipe.yaml` (data collection + `kvs-webrtc-ingest`'s `viewerRoleArn`), `components/.../artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/index.html`, `COMPONENT_ARCHITECTURE.md` |
-| `<IOT_ENDPOINT>` | AWS IoT Core ATS data endpoint (`xxxx-ats.iot.<region>.amazonaws.com`) | `web-ui/index.html` |
-| `<WEB_USERNAME>` | Web console login username | `web-ui/index.html`, `infra/cloudformation.yaml`, docs |
-| `<WEB_PASSWORD>` | Web console login password | `web-ui/index.html`, `infra/cloudformation.yaml`, docs |
-| `<DATA_BUCKET>` | Dataset upload S3 bucket (recommended to be in the **same region** as the deployment — avoids presign mismatch) | `web-ui/index.html` (#bk default), deployment config `s3Bucket` |
+| `<AWS_ACCOUNT_ID>` | 12-digit AWS account ID | `components/.../recipe.yaml` (data collection + `kvs-webrtc-ingest`'s `viewerRoleArn`), `components/.../artifacts/collect.py`, `infra/cloudformation.yaml`*, `web-ui/*.html`, `COMPONENT_ARCHITECTURE.md` |
+| `<IOT_ENDPOINT>` | AWS IoT Core ATS data endpoint (`xxxx-ats.iot.<region>.amazonaws.com`) | `web-ui/*.html` |
+| `<WEB_USERNAME>` | Web console login username | `web-ui/*.html`, `infra/cloudformation.yaml`, docs |
+| `<WEB_PASSWORD>` | Web console login password | `web-ui/*.html`, `infra/cloudformation.yaml`, docs |
+| `<DATA_BUCKET>` | Dataset upload S3 bucket (recommended to be in the **same region** as the deployment — avoids presign mismatch) | `web-ui/*.html` (#bk default), deployment config `s3Bucket` |
 
 \* `<AWS_ACCOUNT_ID>` is used in S3 bucket names (`greengrass-datasets-<AWS_ACCOUNT_ID>`) etc.
    Adjust it to match your own bucket naming convention.
@@ -133,12 +135,12 @@ aws iot describe-endpoint --endpoint-type iot:Data-ATS \
 ```bash
 # macOS (on Linux use sed -i)
 grep -rl '<AWS_ACCOUNT_ID>' . | xargs sed -i '' 's/<AWS_ACCOUNT_ID>/123456789012/g'
-sed -i '' 's/<IOT_ENDPOINT>/xxxxxxxxxxxxx-ats.iot.ap-northeast-2.amazonaws.com/g' web-ui/index.html
-# Web credentials must be kept identical between index.html and infra/cloudformation.yaml.
+sed -i '' 's/<IOT_ENDPOINT>/xxxxxxxxxxxxx-ats.iot.ap-northeast-2.amazonaws.com/g' web-ui/*.html
+# Web credentials must be kept identical between web-ui/*.html and infra/cloudformation.yaml.
 ```
 
 ### 🔐 Security notes
-- `<WEB_USERNAME>` / `<WEB_PASSWORD>` must be set **identically in `web-ui/index.html` and
+- `<WEB_USERNAME>` / `<WEB_PASSWORD>` must be set **identically in `web-ui/*.html` and
   `infra/cloudformation.yaml`** (the Custom Authorizer Lambda) for login to work.
 - The original demo used `admin`/`admin` as defaults. **For production, always change these to
   strong values** and, if possible, manage them via CloudFormation parameters / Secrets Manager.
@@ -192,7 +194,7 @@ structure, see `COMPONENT_ARCHITECTURE.md`, `design.md`, `AGENTS.md`.
 ## Usage Scenarios
 
 ### Scenario A — Multi-episode collection session (default flow)
-1. **Log in** — Open `web-ui/index.html` (CloudFront) and connect with `<WEB_USERNAME>`/`<WEB_PASSWORD>`.
+1. **Log in** — Open the web console on CloudFront and connect with `<WEB_USERNAME>`/`<WEB_PASSWORD>`. Two live screens are available: **`live-p2p.html`** (default landing, sub-second P2P) and **`multiviewer.html`** (KVS storage viewer; cloud fan-out up to 3 viewers, device-independent). See "Which live screen?" below.
 2. **Check the live view** — In the *Monitor* tab, `WebRTC Live` shows the workspace color video (device clock at bottom-right).
 3. **Start recording** — In *Control*, enter an instruction (e.g. `pick orange`) + number of episodes → **⏺ Start**.
    The status badge turns `recording`, and the screen/log shows `start episode 1`.
@@ -230,12 +232,28 @@ structure, see `COMPONENT_ARCHITECTURE.md`, `design.md`, `AGENTS.md`.
 
 ---
 
-## (Optional) Live Video Monitoring — `com.groot.kvs-webrtc-ingest`
+## (Optional) Live Video Monitoring — `com.groot.kvs-webrtc-p2p` or `com.groot.kvs-webrtc-ingest`
 
 Completed recordings are played back via S3 presigned URLs, but watching **video while recording**
-that way has high latency. This optional component provides sub-second live video via
-**color camera → Amazon Kinesis Video Streams (KVS) WebRTC**. (It is a "monitoring" path
-**fully separate** from the LeRobot dataset S3 pipeline.)
+that way has high latency. Two optional components stream the **color camera → Amazon Kinesis Video
+Streams (KVS) WebRTC** for live monitoring (both keep per-episode HLS replay). Pick **one** (both bind
+the same color camera):
+
+- **`com.groot.kvs-webrtc-p2p`** — **peer-to-peer, sub-second** live (device → browser directly);
+  recording preserved via a `kvssink` tee. Up to **10 viewers per channel**, but **bounded by device
+  CPU/uplink**. Best for a **low-latency operator monitor**. Web page: **`live-p2p.html`** (the default
+  deploy set uses this).
+- **`com.groot.kvs-webrtc-ingest`** — **storage-session** live (device → KVS cloud → browser, ~2–5 s+);
+  the KVS cloud fans out up to the **multiviewer quota (3 viewers)**, **independent of device
+  resources**. Web page: **`multiviewer.html`**.
+
+> **Scenario:** lowest-latency monitor for a robot up close → **`kvs-webrtc-p2p` (`live-p2p.html`)**;
+> cloud fan-out independent of device load (up to 3 viewers) → **`kvs-webrtc-ingest`
+> (`multiviewer.html`)**. Full trade-off tables are in each component's README.
+
+The rest of this section covers the storage variant (`kvs-webrtc-ingest`); see
+[`components/com.groot.kvs-webrtc-p2p/README.md`](components/com.groot.kvs-webrtc-p2p/README.md) for
+the P2P variant.
 
 - **How it works**: GStreamer H.264-encodes the color camera → a KVS WebRTC **STORAGE** master sample
   ingests media into the signaling channel via `JoinStorageSession` → the browser watches as a WebRTC **viewer**.
@@ -293,6 +311,7 @@ The components and features included in this sample (sensitive values are placeh
 | `com.lerobot.data-collection.v21` | 1.0.0 | Data-collection recipe pinned to **lerobot v0.3.3** → produces **LeRobot dataset v2.1 (per-episode files:** `data/chunk-000/episode_000000.parquet`, `videos/chunk-000/<key>/episode_000000.mp4`**)**. Ships its own `collect.py` where **Discard re-records the current episode** (not a full-session stop), adds a reset-window countdown, and a `recSeq` real-time recording-start signal |
 | `com.lerobot.data-collection.v21.gpu` | 1.0.0 | v2.1 (per-episode) **with real GPU (NVENC) video encoding**. The image patches lerobot's `encode_video_frames` to encode the PNG frames via the **system `ffmpeg` CLI with `h264_nvenc`** (falls back to the original PyAV/CPU SVT-AV1 on any failure). Measured **~2.7x faster** encoding than CPU on Jetson Thor (see [GPU_ENCODING.md](GPU_ENCODING.md)). Ships its own `collect.py` (identical to `.v21`'s controller) |
 | `com.groot.kvs-webrtc-ingest` | 1.0.0 | Color camera → KVS WebRTC ingestion (live/episode-playback source `thor-001-webrtc`). Burns the device clock (HH:MM:SS) via clockoverlay + issues viewer STS credentials |
+| `com.groot.kvs-webrtc-p2p` | 1.0.0 | Color camera → single capture tee'd to KVS WebRTC **P2P** master (`thor-001-p2p`, sub-second live) + `kvssink` recording (`thor-001-webrtc`, HLS replay). Low-latency alternative to `kvs-webrtc-ingest` |
 
 > `.gpu` does not package `collect.py` separately; it fetches the original path
 > `s3://greengrass-datasets-<AWS_ACCOUNT_ID>/collect/com.lerobot.data-collection/<ver>/collect.py`

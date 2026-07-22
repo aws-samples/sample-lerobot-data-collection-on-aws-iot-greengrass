@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>P2P LeRobot Data Collection</title>
-<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js" integrity="sha384-u4uqeACkFcoKl57rBQJHVGDd1pqhW4w8X3WjTu1ZksPdxoLqdt34jpoNkJisE25W" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js" integrity="sha384-w6Gb3fXHb5e1LUYa/hYA5Q41bEDglN5ZPCG7Jvnoo8/X90oGnlPqBlBJCe38mEMm" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/aws-sdk/2.1692.0/aws-sdk.min.js" integrity="sha384-bsVTXMksIT73n577G/meHKgRRSzJu77AotDGo6x838B7oRUm9U+NvG/o2FLodTic" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/amazon-kinesis-video-streams-webrtc@2.8.1/dist/kvs-webrtc.min.js" integrity="sha384-hjUWCzXUdlOkwbIhlfk7ED2rpItw3qirvbCmWa1396rXquhy0aBYM4vCnbHVIXOh" crossorigin="anonymous"></script>
+<title>LeRobot Data Collection</title>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<script src="https://sdk.amazonaws.com/js/aws-sdk-2.1692.0.min.js"></script>
+<script src="https://unpkg.com/amazon-kinesis-video-streams-webrtc@2.8.1/dist/kvs-webrtc.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;padding:1rem}
@@ -32,7 +32,7 @@ input:focus{outline:none;border-color:#fb923c}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem}
 .navbar{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin-bottom:.8rem}
 .bnav{background:#334155;color:#e2e8f0}
-.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;font-size:.68rem;font-weight:600;text-transform:uppercase}
+.badge{display:inline-block;padding:.28rem .7rem;border-radius:999px;font-size:1.05rem;font-weight:700;text-transform:uppercase}
 .si{background:#374151;color:#9ca3af}.sr{background:#7f1d1d;color:#fca5a5;animation:p 1s infinite}
 .su{background:#1e3a5f;color:#93c5fd}.sd{background:#064e3b;color:#6ee7b7}
 .se{background:#7f1d1d;color:#f87171}.sx{background:#4a1d1d;color:#f87171}
@@ -81,29 +81,30 @@ video{width:100%;border-radius:8px;margin-top:.4rem;background:#000}
 <h2>Control</h2>
 <label>Instruction</label>
 <input id="lang" value="pick orange"/>
-<label>Episodes</label>
-<input id="ne" type="number" min="1" value="50"/>
+<div class="row">
+<div><label>Episodes</label><input id="ne" type="number" min="1" value="50"/></div>
+<div><label>Reset (s)</label><input id="rt" type="number" min="0" value="10"/></div>
+</div>
 <button class="btn bs" id="b1" onclick="cmd('start')">⏺ Start Recording</button>
 <div class="row3">
 <button class="btn bo" id="b2" onclick="cmd('stop')">⏹ Stop &amp; Save</button>
-<button class="btn bs" id="bEnd" onclick="cmd('endSession')">🟥 End Session</button>
 <button class="btn bd" id="b3" onclick="cmd('discard')">🗑 Discard</button>
+<button class="btn bs" id="bEnd" onclick="cmd('endSession')">🟥 End Session</button>
 </div>
 <p style="font-size:.66rem;color:#64748b;margin-top:.3rem">Records the specified number of episodes back-to-back in <b>a single container</b>. Auto-uploads on End Session or Stop.</p>
 <h2 style="margin-top:.6rem">S3 Settings</h2>
-<label>Bucket</label>
-<input id="bk" value="<DATA_BUCKET>"/>
-<label>Prefix</label>
-<input id="px" value="datasets/"/>
-<button class="btn bu" id="b4" onclick="cmd('upload')">☁️ Upload to S3</button>
+<div class="row" style="grid-template-columns:2fr 1fr">
+<div><label>Bucket</label><input id="bk" value="<DATA_BUCKET>"/></div>
+<div><label>Prefix</label><input id="px" value="datasets/"/></div>
+</div>
 </div>
 
 <div class="card h" id="P2">
 <h2>Status</h2>
 <span class="badge sx" id="bg">disconnected</span>
 <div class="g2" style="margin-top:.4rem">
-<div class="inf"><div class="l">Episode</div><div class="v" id="ve">0/50</div></div>
-<div class="inf"><div class="l">Step</div><div class="v" id="vs">0/300</div></div>
+<div class="inf"><div class="l">Episode</div><div class="v" id="ve" style="font-size:2rem;font-weight:700">0/50</div></div>
+<div class="inf" id="rcBox"><div class="l">Reset</div><div class="v" id="rc" style="font-size:2rem;font-weight:700;color:#facc15">—</div></div>
 </div>
 <div id="s3p" style="margin-top:.4rem;font-size:.7rem;color:#6ee7b7;word-break:break-all;display:none"></div>
 <div id="errmsg" style="margin-top:.4rem;font-size:.74rem;color:#f87171;word-break:break-all;display:none"></div>
@@ -122,8 +123,9 @@ video{width:100%;border-radius:8px;margin-top:.4rem;background:#000}
 <div><label>Date</label><input id="fd"/></div>
 <div><label>Instruction</label><input id="fl" value="pick orange"/></div>
 </div>
-<div class="row">
-<button class="btn bl" id="b5" onclick="listFiles()">🔄 List</button>
+<div class="row3">
+<button class="btn bl" id="b5" onclick="document.getElementById('fldata').style.display='';listFiles()">🔄 List</button>
+<button class="btn bd" id="b7" onclick="document.getElementById('fldata').style.display='none'">🙈 Hide List</button>
 <button class="btn bu" id="b6" onclick="uploadSelected()" disabled>⬆️ Upload Selected</button>
 </div>
 <div class="flist" id="fldata"><p style="font-size:.7rem;color:#64748b">Click "List" to load files.</p></div>
@@ -163,7 +165,7 @@ video{width:100%;border-radius:8px;margin-top:.4rem;background:#000}
 
 <script>
 let C=null,TN='';
-function L(m){const e=document.getElementById('lg');const d=document.createElement('div');d.textContent='['+new Date().toLocaleTimeString()+'] '+m;e.appendChild(d);e.scrollTop=e.scrollHeight}
+function L(m){const e=document.getElementById('lg');e.innerHTML+=`<div>[${new Date().toLocaleTimeString()}] ${m}</div>`;e.scrollTop=e.scrollHeight}
 
 function doLogin(){
   const ep=document.getElementById('ep').value.trim();
@@ -222,22 +224,40 @@ function doLogin(){
 function cmd(a){
   if(!C||!C.connected){alert('Not connected');return}
   const d={action:a};
-  if(a==='start'){d.lang=document.getElementById('lang').value.trim();d.numEpisodes=document.getElementById('ne')?document.getElementById('ne').value:'1'}
+  if(a==='start'){d.lang=document.getElementById('lang').value.trim();d.numEpisodes=document.getElementById('ne')?document.getElementById('ne').value:'1';d.resetTime=document.getElementById('rt')?document.getElementById('rt').value:'10'}
   if(a==='upload'){d.s3Bucket=document.getElementById('bk').value.trim();d.s3Prefix=document.getElementById('px').value.trim()}
-  C.publish('lerobot/'+TN+'/collect/command',JSON.stringify(d),{qos:1});L('→ '+a);
+  C.publish('lerobot/'+TN+'/collect/command',JSON.stringify(d),{qos:1});L('→ '+a);if(a==='start'){HS._recActive=false;HS._lastSeq=null;HS._lastEp=null;HS._sawSeq=false;SB('setup');}if(a==='stop'||a==='discard'){HS._recActive=false;SB('setup');}
 }
 
 function HS(s){
-  SB(s.state);
+  if(s.state==='recording'){
+    // REC only while an episode is actually recording (recSeq bumps at each
+    // 'Recording episode'); SETUP during the save/reset/warmup gap.
+    if(typeof s.recSeq==='number'){ HS._sawSeq=true; if(s.recSeq!==HS._lastSeq){ HS._recActive=true; HS._lastSeq=s.recSeq; } }
+    if(typeof s.resetRemaining==='number' && s.resetRemaining>0){ HS._recActive=false; }
+    // Fallback: if the device never sends recSeq (collect.py without the v2.1
+    // reset infra), just show REC while recording (no SETUP distinction).
+    SB((HS._sawSeq ? HS._recActive : true) ? 'recording' : 'setup');
+  } else {
+    HS._recActive=false; HS._lastSeq=null; HS._sawSeq=false; SB(s.state);
+  }
   document.getElementById('ve').textContent=s.episode+'/'+s.totalEpisodes;
   // Log "start episode N" the moment the screen advances to a new episode number.
   const ep=parseInt(s.episode,10);
   if(s.state==='idle'){ HS._lastEp=null; }
   if(!isNaN(ep) && ep!==HS._lastEp && s.state==='recording'){ L('start episode '+ep); HS._lastEp=ep; }
-  document.getElementById('vs').textContent=s.step+'/'+s.maxSteps;
+  // Inter-episode reset countdown surfaced by the device (one status per second
+  // during lerobot's reset_time_s window). De-dupe repeated values just in case.
+  var rc=document.getElementById('rc');
+  if(typeof s.resetRemaining==='number' && s.resetRemaining>0){
+    if(s.resetRemaining!==HS._lastReset){ L('reset time remaining '+s.resetRemaining); HS._lastReset=s.resetRemaining; }
+    if(rc) rc.textContent=s.resetRemaining+'s';
+  } else {
+    if(typeof s.resetRemaining!=='number') HS._lastReset=null;
+    if(rc) rc.textContent='—';
+  }
   const r=s.state==='recording';
   document.getElementById('b1').disabled=r;
-  document.getElementById('b4').disabled=r;
   // Stop & Save / End Session / Discard stay enabled regardless of state,
   // so recording can always be stopped even if a status update is delayed.
   const em=document.getElementById('errmsg');
@@ -294,7 +314,7 @@ function playKvsIdx(i){
     document.getElementById('kvsPlay').scrollIntoView({behavior:'smooth'})}
 }
 
-// ===== WebRTC live viewer (pure P2P, channel thor-001-p2p) =====
+// ===== WebRTC live viewer (joinStorageSessionAsViewer, thor-001-webrtc) =====
 // Viewer credentials are minted by the device and delivered over MQTT
 // (lerobot/{thing}/webrtc/viewer, retained) as short-lived STS (KvsViewerRole),
 // same delivery path as the HLS URLs.
@@ -355,6 +375,28 @@ async function startHlsLive(){
     L('HLS live ready ('+stream+')');
   }catch(e){ L('HLS live failed: '+(e.message||e)); }
 }
+// SigV4-signed JoinStorageSessionAsViewer (aws-sdk v2 lacks this operation).
+// POSTs to the WEBRTC control endpoint so KVS relays the ingested media to this
+// viewer's WebRTC session. Throws on non-2xx (caller falls back to HLS).
+async function joinStorageViewerREST(region, endpointUrl, channelArn, clientId, creds){
+  const endpoint=new AWS.Endpoint(endpointUrl);
+  const req=new AWS.HttpRequest(endpoint, region);
+  req.method='POST';
+  req.path='/joinStorageSessionAsViewer';
+  req.headers['Host']=endpoint.host;
+  req.headers['Content-Type']='application/json';
+  req.body=JSON.stringify({channelArn:channelArn, clientId:clientId});
+  const signer=new AWS.Signers.V4(req,'kinesisvideo');
+  signer.addAuthorization(creds, new Date());
+  const headers={};
+  Object.keys(req.headers).forEach(function(h){ if(h.toLowerCase()!=='host') headers[h]=req.headers[h]; });
+  const resp=await fetch(endpoint.protocol+'//'+endpoint.host+req.path,
+    {method:'POST', headers:headers, body:req.body});
+  if(!(resp.status>=200&&resp.status<300)){
+    throw new Error('HTTP '+resp.status+' '+(await resp.text().catch(function(){return''})).slice(0,160));
+  }
+  return true;
+}
 async function startWebrtcViewer(){
   if(!CREDS||!CREDS.channelArn){ L('WebRTC: waiting for credentials/channel'); return; }
   if(!window.KVSWebRTC||!window.AWS){ L('WebRTC SDK not loaded'); return; }
@@ -375,8 +417,7 @@ async function startWebrtcViewer(){
     vPC=new RTCPeerConnection({iceServers,iceTransportPolicy:'all'});
     vPC.addEventListener('icecandidate',({candidate})=>{ if(candidate) vSC.sendIceCandidate(candidate); });
     vPC.addEventListener('track',(e)=>{ document.getElementById('kvsLive').srcObject=e.streams[0]; L('WebRTC video track received (P2P)'); });
-    // Pure P2P (non-storage, e.g. thor-001-p2p): the VIEWER sends the OFFER; the device (master) answers.
-    // No joinStorageSessionAsViewer -> device->browser directly -> sub-second latency.
+    // Pure P2P (non-storage thor-001-p2p): the VIEWER sends the OFFER; device (master) answers.
     vSC.on('open',async()=>{
       L('WebRTC signaling open (P2P) - sending offer');
       try{
@@ -429,7 +470,7 @@ async function playEpisode(i){
     const am=new AWS.KinesisVideoArchivedMedia({region,credentials:creds,endpoint:ep.DataEndpoint});
     const res=await am.getHLSStreamingSessionURL({StreamName:stream,PlaybackMode:'ON_DEMAND',
       HLSFragmentSelector:{FragmentSelectorType:'PRODUCER_TIMESTAMP',
-        TimestampRange:{StartTimestamp:new Date(e.start*1000),EndTimestamp:new Date(e.end*1000)}},Expires:3600}).promise();
+        TimestampRange:{StartTimestamp:new Date(e.start*1000),EndTimestamp:new Date(e.end*1000)}},Expires:43200}).promise();
     attachHls(document.getElementById('kvsPlay'),res.HLSStreamingSessionURL);
     document.getElementById('kvsPlay').scrollIntoView({behavior:'smooth'});
     L('Episode '+e.episode+' playback ('+stream+')');
@@ -500,7 +541,7 @@ async function playRangeHls(){
     }else{
       params={StreamName:stream,PlaybackMode:'ON_DEMAND',
         HLSFragmentSelector:{FragmentSelectorType:'PRODUCER_TIMESTAMP',
-          TimestampRange:{StartTimestamp:startD,EndTimestamp:endD}},Expires:3600};
+          TimestampRange:{StartTimestamp:startD,EndTimestamp:endD}},Expires:43200};
     }
     const res=await am.getHLSStreamingSessionURL(params).promise();
     attachHls(document.getElementById('kvsPlay'),res.HLSStreamingSessionURL);
@@ -548,20 +589,29 @@ function fmtSize(n){
 }
 
 function HF(p){
-  FILES=p.files||[];
   const box=document.getElementById('fldata');
-  if(p.error){box.innerHTML='<p style="font-size:.7rem;color:#f87171">Error: '+p.error+'</p>';return}
-  if(!FILES.length){box.innerHTML='<p style="font-size:.7rem;color:#64748b">No files ('+(p.date||'')+' / '+(p.lang||'')+')</p>';
-    document.getElementById('b6').disabled=true;return}
-  // Group by session
+  // Lazy single-file download URL response (action:"url").
+  if(p.action==='url'){
+    if(p.url){ window.open(p.url,'_blank'); L('download: '+(p.key||'').split('/').pop()); }
+    else{ L('no url'+(p.key?(' for '+p.key.split('/').pop()):'')); }
+    return;
+  }
+  if(p.error){ box.innerHTML='<p style="font-size:.7rem;color:#f87171">Error: '+p.error+'</p>'; return; }
+  // Paginated file list: accumulate pages, render on the last page.
+  const page=p.page||0, pages=p.pages||1;
+  if(page===0){ HF._acc=[]; }
+  HF._acc=(HF._acc||[]).concat(p.files||[]);
+  if(page < pages-1){ box.innerHTML='<p style="font-size:.7rem;color:#64748b">Loading... ('+(page+1)+'/'+pages+')</p>'; return; }
+  FILES=HF._acc||[]; HF._acc=null;
+  if(!FILES.length){ box.innerHTML='<p style="font-size:.7rem;color:#64748b">No files ('+(p.date||'')+' / '+(p.lang||'')+')</p>'; document.getElementById('b6').disabled=true; return; }
   const groups={};
   FILES.forEach(f=>{(groups[f.session]=groups[f.session]||[]).push(f)});
   let html='';
   Object.keys(groups).sort().forEach(sess=>{
-    html+='<div class="fsess">📁 '+sess+' <button class="fbtn play" title="Play session episodes" onclick="playSession(\''+sess+'\')">▶️</button></div>';
+    html+='<div class="fsess">\ud83d\udcc1 '+sess+' <button class="fbtn play" title="Play session episodes" onclick="playSession(\''+sess+'\')">\u25b6\ufe0f</button></div>';
     groups[sess].forEach(f=>{
       const tag=f.uploaded?'<span class="tagU">Uploaded</span>':'<span class="tagN">Not uploaded</span>';
-      const dl=f.uploaded&&f.url?'<a class="fbtn" href="'+f.url+'" download>⬇️</a>':'';
+      const dl=f.uploaded?'<button class="fbtn" title="Download" onclick="getUrl(\''+f.key+'\')">\u2b07\ufe0f</button>':'';
       html+='<div class="frow">'+
         '<input type="checkbox" class="fchk" value="'+f.key+'"'+(f.uploaded?'':' checked')+'>'+
         '<span class="nm" title="'+f.rel+'">'+f.rel+'</span>'+
@@ -574,7 +624,11 @@ function HF(p){
   const up=FILES.filter(f=>f.uploaded).length;
   L('Files: '+FILES.length+' ('+up+' uploaded)');
 }
-
+function getUrl(key){
+  if(!C||!C.connected){alert('Not connected');return}
+  C.publish('lerobot/'+TN+'/collect/command',JSON.stringify({action:'geturl',key:key,s3Bucket:document.getElementById('bk').value.trim()}),{qos:1});
+  L('\u2192 geturl '+key.split('/').pop());
+}
 function playFile(i){
   const f=FILES[i]; if(!f||!f.url)return;
   // If this file's session is the latest recorded session (in the shadow),
@@ -596,9 +650,9 @@ function playFile(i){
 
 function SB(st){
   const b=document.getElementById('bg');
-  const cls={idle:'si',recording:'sr',saving:'su',uploading:'su',done:'sd',error:'se',disconnected:'sx'};
+  const cls={idle:'si',recording:'sr',setup:'su',saving:'su',uploading:'su',done:'sd',error:'se',disconnected:'sx'};
   b.className='badge '+(cls[st]||'sx');
-  const lb={idle:'IDLE',recording:'⏺ REC',saving:'💾 SAVING',uploading:'UPLOADING',done:'DONE',error:'ERROR',disconnected:'DISCONNECTED'};
+  const lb={idle:'IDLE',recording:'⏺ REC',setup:'⚙️ SETUP',saving:'💾 SAVING',uploading:'UPLOADING',done:'DONE',error:'ERROR',disconnected:'DISCONNECTED'};
   b.textContent=lb[st]||st;
 }
 </script>

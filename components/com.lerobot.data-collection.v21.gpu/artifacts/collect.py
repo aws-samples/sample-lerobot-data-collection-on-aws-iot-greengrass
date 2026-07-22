@@ -46,6 +46,7 @@ class Controller:
         self.state          = "idle"
         self.episode        = 0    # episodes captured so far in current session
         self.total_episodes = int(os.environ.get("NUM_EPISODES", "50"))
+        self.reset_time_s   = RESET_TIME_S
         self.step           = 0
         self.lang           = os.environ.get("LANG_INSTRUCTION", "pick orange")
         self._ipc           = None
@@ -287,6 +288,12 @@ class Controller:
             threading.Thread(target=self._upload_files,
                              args=(bucket, prefix, date, lang, files), daemon=True).start()
             return
+        elif action == "geturl":
+            # Lazily presign a single S3 key (keeps the file list small).
+            bucket = payload.get("s3Bucket", "") or S3_BUCKET
+            key    = payload.get("key", "")
+            threading.Thread(target=self._get_url, args=(bucket, key), daemon=True).start()
+            return
         elif action == "kvsLive":
             # Live HLS URL for monitoring the workspace camera (KVS).
             threading.Thread(target=self._publish_kvs_live, daemon=True).start()
@@ -380,6 +387,10 @@ class Controller:
         except (TypeError, ValueError):
             self.total_episodes = int(os.environ.get("NUM_EPISODES", "1"))
         num_ep   = str(self.total_episodes)
+        try:
+            self.reset_time_s = max(0, int(str(payload.get("resetTime") or RESET_TIME_S)))
+        except (TypeError, ValueError):
+            self.reset_time_s = RESET_TIME_S
         ep_time  = os.environ.get("EPISODE_LENGTH", "60")
 
         # New session: reset counters and stamp a fresh session/repo id keyed by
@@ -421,7 +432,7 @@ class Controller:
             f"--dataset.num_episodes={num_ep}",
             f"--dataset.fps={fps}",
             f"--dataset.episode_time_s={ep_time}",
-            f"--dataset.reset_time_s={RESET_TIME_S}",
+            f"--dataset.reset_time_s={self.reset_time_s}",
             "--dataset.video=true",
             "--dataset.push_to_hub=false",
             "--dataset.num_image_writer_threads_per_camera=4",
@@ -608,9 +619,9 @@ class Controller:
             # a re-recorded episode after Discard). Surface a per-second
             # countdown to the web UI so the reset period is visible.
             if "Reset the environment" in line:
-                print(f"[RESET] reset phase started ({RESET_TIME_S}s)")
+                print(f"[RESET] reset phase started ({self.reset_time_s}s)")
                 threading.Thread(target=self._reset_countdown,
-                                 args=(RESET_TIME_S,), daemon=True).start()
+                                 args=(self.reset_time_s,), daemon=True).start()
         except Exception:
             pass
 
@@ -843,6 +854,18 @@ class Controller:
         # Refresh the file browser for this date/instruction after uploading.
         self._list_files(bucket, prefix, date, self.lang)
 
+    def _get_url(self, bucket, key):
+        """Presign a single S3 key on demand and publish it (action:"url"), so
+        the file list can omit per-file URLs and stay under the IoT 128KB limit."""
+        url = None
+        try:
+            s3 = self._s3()
+            url = s3.generate_presigned_url("get_object",
+                Params={"Bucket": bucket, "Key": key}, ExpiresIn=3600)
+        except Exception as e:
+            print(f"[Files] geturl ERROR {key}: {e}")
+        self._publish(TOPIC_FILES, {"action": "url", "key": key, "url": url})
+
     def _list_files(self, bucket, prefix, date, lang):
         """List local files for a date+instruction folder, marking which are
         already in S3. Publishes to TOPIC_FILES for the web file browser."""
@@ -883,34 +906,32 @@ class Controller:
                         rel   = os.path.relpath(local, sess_dir)
                         key   = f"{s3_base}/{rel}"
                         is_up = key in uploaded
-                        url   = None
-                        if is_up:
-                            try:
-                                url = s3.generate_presigned_url(
-                                    "get_object",
-                                    Params={"Bucket": bucket, "Key": key},
-                                    ExpiresIn=3600)
-                            except Exception:
-                                url = None
                         files.append({
                             "session": sess,
                             "rel": rel,
                             "key": key,
                             "size": os.path.getsize(local) if os.path.exists(local) else 0,
                             "uploaded": is_up,
-                            "url": url,
                         })
-            print(f"[Files] {len(files)} file(s), {sum(f['uploaded'] for f in files)} uploaded")
-            self._publish(TOPIC_FILES, {
-                "date": date, "slug": slug, "lang": lang,
-                "bucket": bucket, "prefix": prefix,
-                "files": files,
-            })
+            nup = sum(f['uploaded'] for f in files)
+            print(f"[Files] {len(files)} file(s), {nup} uploaded")
+            # No per-file presigned URLs here (fetched lazily via 'geturl' on
+            # download) and the list is paginated so each MQTT message stays well
+            # under the AWS IoT Core 128 KB payload limit.
+            PAGE = 100
+            pages = max(1, (len(files) + PAGE - 1) // PAGE)
+            for pi in range(pages):
+                self._publish(TOPIC_FILES, {
+                    "date": date, "slug": slug, "lang": lang,
+                    "bucket": bucket, "prefix": prefix,
+                    "page": pi, "pages": pages, "total": len(files),
+                    "files": files[pi*PAGE:(pi+1)*PAGE],
+                })
         except Exception as e:
             print(f"[Files] ERROR: {e}")
             import traceback; traceback.print_exc()
             self._publish(TOPIC_FILES, {"date": date, "slug": slug, "files": [],
-                                        "error": str(e)})
+                                        "page": 0, "pages": 1, "error": str(e)})
 
     def _upload_files(self, bucket, prefix, date, lang, rel_keys):
         """Re-upload a user-selected subset of files (by their S3 key) then

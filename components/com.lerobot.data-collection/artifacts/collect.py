@@ -20,6 +20,9 @@ TOPIC_CMD    = f"lerobot/{THING_NAME}/collect/command"
 TOPIC_STATUS = f"lerobot/{THING_NAME}/collect/status"
 TOPIC_VIDEO  = f"lerobot/{THING_NAME}/collect/video"
 TOPIC_FILES  = f"lerobot/{THING_NAME}/collect/files"
+# Inter-episode reset window (lerobot --dataset.reset_time_s), surfaced to the
+# web UI as a per-second countdown during lerobot's reset gap.
+RESET_TIME_S = int(os.environ.get("RESET_TIME_S", "10"))
 TOPIC_KVS    = f"lerobot/{THING_NAME}/collect/kvs"
 # WebRTC-ingested color stream (com.groot.kvs-webrtc-ingest) used for per-episode
 # on-demand HLS playback in the web UI (NOT the IR monitoring stream).
@@ -41,6 +44,9 @@ class Controller:
         self.state          = "idle"
         self.episode        = 0    # episodes captured so far in current session
         self.total_episodes = int(os.environ.get("NUM_EPISODES", "50"))
+        self.reset_time_s   = RESET_TIME_S
+        self._rec_seq       = 0     # increments on every actual 'Recording episode'
+        self._reset_cd_active = False
         self.step           = 0
         self.lang           = os.environ.get("LANG_INSTRUCTION", "pick orange")
         self._ipc           = None
@@ -361,6 +367,10 @@ class Controller:
         except (TypeError, ValueError):
             self.total_episodes = int(os.environ.get("NUM_EPISODES", "1"))
         num_ep   = str(self.total_episodes)
+        try:
+            self.reset_time_s = max(0, int(str(payload.get("resetTime") or RESET_TIME_S)))
+        except (TypeError, ValueError):
+            self.reset_time_s = RESET_TIME_S
         ep_time  = os.environ.get("EPISODE_LENGTH", "60")
 
         # New session: reset counters and stamp a fresh session/repo id keyed by
@@ -402,7 +412,7 @@ class Controller:
             f"--dataset.num_episodes={num_ep}",
             f"--dataset.fps={fps}",
             f"--dataset.episode_time_s={ep_time}",
-            "--dataset.reset_time_s=10",
+            f"--dataset.reset_time_s={self.reset_time_s}",
             "--dataset.video=true",
             "--dataset.push_to_hub=false",
             "--dataset.num_image_writer_threads_per_camera=4",
@@ -559,16 +569,56 @@ class Controller:
                 # Next episode is ready and (re)recording has started (lerobot emits
                 # 'Recording episode N' once per episode, after the reset gap).
                 print(f"[START] episode {ep}/{self.total_episodes} ready — recording started")
-                if ep != self.episode:
-                    self.episode = ep
-                    self.step = 0
-                    self._publish_status()
+                # Emit a status on EVERY actual recording start so the web UI can
+                # switch to REC exactly when an episode begins. recSeq increments
+                # once per 'Recording episode'.
+                self._rec_seq += 1
+                prev_ep = self.episode
+                self.episode = ep
+                self.step = 0
+                self._publish_status(extra={"recSeq": self._rec_seq,
+                                            "recStart": round(now, 3)})
+                if ep != prev_ep:
                     print(f"[REC] Episode {ep}/{self.total_episodes} recording")
                 return
             if re.search(r"utils\.py:\d+\s+Stop recording", line):
                 print(f"[REC] lerobot: stop recording")
+            # Inter-episode reset window: lerobot logs "Reset the environment" at
+            # the start of the reset_time_s gap. Surface a per-second countdown to
+            # the web UI (no-op if this lerobot build doesn't emit that log).
+            if "Reset the environment" in line:
+                print(f"[RESET] reset phase started ({self.reset_time_s}s)")
+                threading.Thread(target=self._reset_countdown,
+                                 args=(self.reset_time_s,), daemon=True).start()
         except Exception:
             pass
+
+    def _reset_countdown(self, seconds):
+        """Publish a per-second reset countdown to the web UI during lerobot's
+        inter-episode reset window (resetRemaining on TOPIC_STATUS). Guarded so
+        overlapping resets don't stack."""
+        if self._reset_cd_active:
+            return
+        self._reset_cd_active = True
+        try:
+            for i in range(int(seconds), 0, -1):
+                if not (self._proc and self._proc.poll() is None):
+                    break
+                self._publish(TOPIC_STATUS, {
+                    "state": self.state,
+                    "episode": self.episode,
+                    "totalEpisodes": self.total_episodes,
+                    "step": self.step,
+                    "maxSteps": int(os.environ.get("EPISODE_LENGTH", "300")),
+                    "langInstruction": self.lang,
+                    "datasetName": DATASET_NAME,
+                    "error": getattr(self, "_error", ""),
+                    "resetRemaining": i,
+                })
+                print(f"[RESET] reset time remaining {i}")
+                time.sleep(1)
+        finally:
+            self._reset_cd_active = False
 
     def _stop_recording(self, discard=False):
         """Stop the persistent container, ending the WHOLE session early.
@@ -928,7 +978,7 @@ class Controller:
         self._publish(TOPIC_KVS, {"type": "episodes", "stream": KVS_STREAM, "episodes": eps})
         print(f"[KVS] {len(eps)} episode HLS url(s) published")
 
-    def _publish_status(self):
+    def _publish_status(self, extra=None):
         status = {
             "state": self.state,
             "episode": self.episode,
@@ -939,6 +989,8 @@ class Controller:
             "datasetName": DATASET_NAME,
             "error": getattr(self, "_error", ""),
         }
+        if extra:
+            status.update(extra)
         print(f"[STATUS] state={status['state']} episode={status['episode']}")
         self._publish(TOPIC_STATUS, status)
 
